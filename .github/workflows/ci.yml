@@ -1,0 +1,41 @@
+# Twin of .forgejo/workflows/ci.yml. Forgejo reads .forgejo/workflows first
+# and only falls back to this directory when it is absent, so the two are one
+# file per forge rather than duplicates to keep in sync by copy-paste.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: cachix/install-nix-action@v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # The same hooks the local commit hook runs, so a green CI means a clean
+      # `pre-commit run --all-files` on the developer's machine and vice versa.
+      - name: pre-commit
+        run: nix develop .#ci -c pre-commit run --all-files --show-diff-on-failure
+
+      # Builds the crate, which runs `cargo test` in checkPhase.
+      - name: build
+        run: nix build .#default --print-build-logs
+
+      - name: nix flake check
+        run: nix flake check --no-build --print-build-logs

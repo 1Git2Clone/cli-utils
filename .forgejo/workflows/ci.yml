@@ -1,0 +1,39 @@
+# Twin of .github/workflows/ci.yml. The existence of this directory is what
+# stops Forgejo running the GitHub file; delete it and Forgejo falls back to
+# `.github/workflows` again.
+#
+# `nix-node` is the one runner label that has both nix and node, which is what
+# lets the checkout action run here rather than a hand-written `git fetch`.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Format, lint and build
+    runs-on: nix-node
+    env:
+      # A prompt in a non-interactive container is a hang that burns the full
+      # job timeout; this turns that into an immediate, readable failure.
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: pre-commit
+        run: nix develop .#ci -c pre-commit run --all-files --show-diff-on-failure
+
+      # Builds the crate, which runs `cargo test` in checkPhase.
+      - name: build
+        run: nix build .#default --print-build-logs
+
+      - name: nix flake check
+        run: nix flake check --no-build --print-build-logs
