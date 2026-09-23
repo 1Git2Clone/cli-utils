@@ -28,10 +28,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
+      # The same hooks the local commit hook runs, so a green CI means a clean
+      # `pre-commit run --all-files` on the developer's machine and vice versa.
       - name: pre-commit
         run: nix develop .#ci -c pre-commit run --all-files --show-diff-on-failure
 
       # Builds the crate, which runs `cargo test` in checkPhase.
+      #
+      # ONE command, matching the GitHub twin. Until the runner's nix-node image
+      # stopped baking `sandbox = false` (vps@2026-09-23), this had to be two
+      # builds with a `rm -rf /homeless-shelter` between them: unsandboxed, cargo
+      # creates $HOME/.cargo for real -- nixpkgs' cargoSetupHook sets no
+      # CARGO_HOME -- and Nix then refuses to start any later builder in the job.
+      # `.#default` is a symlinkJoin OVER ls-posts, i.e. two builders in one
+      # command, so it tripped that every time.
       - name: build
         run: nix build .#default --print-build-logs
 
