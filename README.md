@@ -9,6 +9,7 @@ built by Cargo, Go, or a Python wrapper is an implementation detail.
 | Tool | Language | What it does |
 | --- | --- | --- |
 | [`ls-posts`](tools/ls-posts/) | Rust | Reconstruct gallery-dl post URLs from a folder tree |
+| [`scripts`](tools/scripts/) | Bash, Python | Desktop and shell helpers, one package per script, named after its file |
 
 ## Install
 
@@ -45,4 +46,5 @@ tool's own directory, not the repo root.
 flake.nix            # packages.<system>.<tool>, devShells, checks
 tools/
   ls-posts/          # one directory per tool, with its own build files
+  scripts/           # grouped by responsibility, one default.nix for all
 ```
