@@ -55,7 +55,8 @@ let
     ];
     "bulk-color-shift.sh" = script "media/bulk-color-shift.sh" [ scripts."color_shift.py" ];
     "caelestia-color.sh" = script "desktop/caelestia-color.sh" [ jq ];
-    "clean-system.sh" = script "system/clean-system.sh" [ ];
+    # nix-collect-garbage is left to PATH, to match the running daemon.
+    "clean-system.sh" = script "system/clean-system.sh" [ rmlint ];
     "cliphist-remove-entry.sh" = script "desktop/cliphist-remove-entry.sh" [
       cliphist
       wofi
@@ -67,7 +68,7 @@ let
     ];
     "git-auto.sh" = script "git/git-auto.sh" [ git ];
     "git-push-auto.sh" = script "git/git-push-auto.sh" [ git ];
-    "mysql.sh" = script "system/mysql.sh" [ ];
+    "mysql.sh" = script "system/mysql.sh" [ mariadb.client ];
     "power-mode.sh" = script "desktop/power-mode.sh" [
       wofi
       libnotify

@@ -45,6 +45,6 @@ if [[ "$INPUT_IMAGE" == *.svg ]]; then
 fi
 
 echo "[*] Updating icon cache..."
-gtk-update-icon-cache "$ICON_DIR"
+gtk-update-icon-cache --ignore-theme-index "$ICON_DIR"
 
 echo "[✓] Done! You can now use Icon=$ICON_NAME in your .desktop files."

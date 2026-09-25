@@ -6,18 +6,20 @@ SESSION="${SESSION:-${1:-"code"}}"
 
 tmux new-session -d -s "$SESSION"
 
-# Your steps:
-tmux split-window -h      # mod %
-tmux split-window -h      # mod %
-tmux select-layout even-h # mod E
+# Every command targets $SESSION: untargeted, they hit whichever session tmux
+# considers current, which is not the new one when others exist.
+# Three even columns...
+tmux split-window -h -t "$SESSION"
+tmux split-window -h -t "$SESSION"
+tmux select-layout -t "$SESSION" even-horizontal
 
-tmux select-pane -t 0 # go to first one
-tmux split-window -v  # mod "
+# ...the left one halved...
+tmux split-window -v -t "$SESSION:.{top-left}"
 
-tmux select-pane -t 4     # go to last one
-tmux split-window -v      # mod "
-tmux split-window -v      # mod "
-tmux select-layout even-v # mod E (applies to the active column)
+# ...and the right one in thirds. Sized per split, since select-layout even-v
+# would restack the whole window rather than this column.
+tmux split-window -v -l 66% -t "$SESSION:.{top-right}"
+tmux split-window -v -l 50% -t "$SESSION:.{bottom-right}"
 
 # Attach to the session
 tmux attach-session -t "$SESSION"

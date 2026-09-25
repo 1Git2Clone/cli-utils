@@ -4,11 +4,11 @@ INIT_COMMAND="BEGIN TRANSACTION;"
 
 # Check if at least one argument is provided
 if [ "$#" -lt 1 ]; then
-  mysql --init-command="${INIT_COMMAND}"
+  mariadb --init-command="${INIT_COMMAND}"
   exit 0
 fi
 
 db_file=$1
 shift # Shift the arguments to the left so $@ now contains only the SQL commands
 
-mysql "$db_file" --init-command="${INIT_COMMAND}" "$@"
+mariadb "$db_file" --init-command="${INIT_COMMAND}" "$@"
