@@ -11,7 +11,7 @@ source "$HOME/.profile.d/colors.sh"
 tmux set-option -g status-style "fg=$ON_SURFACE,bg=$BACKGROUND,overline"
 tmux set-option -g status-left "#[fg=$ON_PRIMARY,bg=$PRIMARY,bold]  #S #[fg=$PRIMARY,bg=$BACKGROUND,nobold]"
 tmux set-window-option -g window-status-format "#[fg=$SUBTEXT0,bg=$BACKGROUND] #I  #W "
-tmux set-window-option -g window-status-current-format "#[fg=$PRIMARY_CONTAINER,bg=$BACKGROUND] #[fg=$ON_PRIMARY,bg=$PRIMARY_CONTAINER,bold] #I  #W #[fg=$PRIMARY_CONTAINER,bg=$BACKGROUND,nobold] "
+tmux set-window-option -g window-status-current-format "#[fg=$PRIMARY,bg=$BACKGROUND] #[fg=$ON_PRIMARY,bg=$PRIMARY,bold] #I  #W #[fg=$PRIMARY,bg=$BACKGROUND,nobold] "
 # continuum drives its autosave off a #(...) it prepends to status-right, so
 # overwriting the option blind would stop the saves without saying anything.
 autosave=$(tmux show -gv status-right | grep -o '#([^)]*continuum_save\.sh)' || true)
