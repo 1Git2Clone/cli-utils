@@ -124,6 +124,14 @@ let
     "tmux-layout.sh" = tmuxScript "layout.sh" [ ];
     "tmux-move-window-shift.sh" = tmuxScript "move-window-shift.sh" [ ];
     "tmux-new-named-window.sh" = tmuxScript "new-named-window.sh" [ ];
+    "tmux-popup-move-pane.sh" = tmuxScript "popup-move-pane.sh" [
+      scripts."caelestia-color.sh"
+      scripts."tmux-popup-move-pane-picker.sh"
+    ];
+    "tmux-popup-move-pane-picker.sh" = tmuxScript "popup-move-pane-picker.sh" [
+      scripts."caelestia-color.sh"
+      fzf
+    ];
     "tmux-popup-lazygit.sh" = tmuxScript "popup-lazygit.sh" [ scripts."caelestia-color.sh" ];
     "tmux-popup-newwin.sh" = tmuxScript "popup-newwin.sh" [
       scripts."caelestia-color.sh"
