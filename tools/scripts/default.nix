@@ -172,7 +172,9 @@ let
       fzf
       gawk
     ];
+    "tmux-layout-after-sidebar-remove.py" = py "tmux/tmux-layout-after-sidebar-remove.py" [ ];
     "tmux-resurrect-drop-sidebars.sh" = tmuxScript "resurrect-drop-sidebars.sh" [
+      scripts."tmux-layout-after-sidebar-remove.py"
       gawk
       findutils
     ];
