@@ -4,7 +4,7 @@
 # popup-pins-picker.sh edits it. A pin with no window or pane (the older
 # session-only kind) just switches session.
 file=${XDG_STATE_HOME:-$HOME/.local/state}/tmux-pins
-sess= win= pane=
+sess='' win='' pane=''
 IFS=$'\t' read -r sess win pane < <(awk -v n="$1" '
   { s = index($0, " ") }
   substr($0, 1, s - 1) == n { print substr($0, s + 1) }' "$file" 2>/dev/null || true) || true
