@@ -121,6 +121,10 @@ let
     ];
 
     "tmux-apply-colors.sh" = tmuxScript "apply-colors.sh" [ ];
+    "tmux-hard-refresh.sh" = tmuxScript "hard-refresh.sh" [
+      gawk
+      gnused
+    ];
     "tmux-layout.sh" = tmuxScript "layout.sh" [ ];
     "tmux-move-window-shift.sh" = tmuxScript "move-window-shift.sh" [ ];
     "tmux-new-named-window.sh" = tmuxScript "new-named-window.sh" [ ];
