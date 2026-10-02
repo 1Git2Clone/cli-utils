@@ -132,6 +132,15 @@ let
       scripts."caelestia-color.sh"
       fzf
     ];
+    "tmux-popup-move-window.sh" = tmuxScript "popup-move-window.sh" [
+      scripts."caelestia-color.sh"
+      scripts."tmux-popup-move-window-picker.sh"
+    ];
+    "tmux-popup-move-window-picker.sh" = tmuxScript "popup-move-window-picker.sh" [
+      scripts."caelestia-color.sh"
+      fzf
+      gawk
+    ];
     "tmux-popup-lazygit.sh" = tmuxScript "popup-lazygit.sh" [ scripts."caelestia-color.sh" ];
     "tmux-popup-newwin.sh" = tmuxScript "popup-newwin.sh" [
       scripts."caelestia-color.sh"
