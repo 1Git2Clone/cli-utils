@@ -45,6 +45,13 @@ tmux list-sessions -F '#{session_name}' | while read -r s; do
   tmux list-windows -t "$s" -F '#{session_name}:#{window_index}' |
     while read -r w; do
       tmux show-window-options -t "$w" | opt_names | while read -r o; do
+        # A manual rename-window sets automatic-rename off on that one
+        # window; unsetting it here hands the window straight back to
+        # automatic-rename's live process name -- there is no config
+        # line that would put the manual name back afterward.
+        case "$o" in
+        automatic-rename) continue ;;
+        esac
         tmux set-window-option -u -t "$w" "$o" 2>/dev/null || true
       done
     done
