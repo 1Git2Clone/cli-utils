@@ -153,6 +153,12 @@ let
       fzf
       findutils
     ];
+    "tmux-pin-jump.sh" = tmuxScript "pin-jump.sh" [ gawk ];
+    "tmux-popup-pins.sh" = tmuxScript "popup-pins.sh" [
+      scripts."caelestia-color.sh"
+      scripts."tmux-popup-pins-picker.sh"
+    ];
+    "tmux-popup-pins-picker.sh" = tmuxScript "popup-pins-picker.sh" [ gawk ];
     "tmux-popup-sessions.sh" = tmuxScript "popup-sessions.sh" [
       scripts."caelestia-color.sh"
       scripts."tmux-popup-sessions-picker.sh"
@@ -161,6 +167,10 @@ let
       scripts."caelestia-color.sh"
       fzf
       gawk
+    ];
+    "tmux-resurrect-drop-sidebars.sh" = tmuxScript "resurrect-drop-sidebars.sh" [
+      gawk
+      findutils
     ];
     "tmux-popup-switcher.sh" = tmuxScript "popup-switcher.sh" [
       scripts."caelestia-color.sh"
