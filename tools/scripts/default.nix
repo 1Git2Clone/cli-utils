@@ -121,6 +121,10 @@ let
     ];
 
     "tmux-apply-colors.sh" = tmuxScript "apply-colors.sh" [ ];
+    "tmux-hard-refresh.sh" = tmuxScript "hard-refresh.sh" [
+      gawk
+      gnused
+    ];
     "tmux-layout.sh" = tmuxScript "layout.sh" [ ];
     "tmux-move-window-shift.sh" = tmuxScript "move-window-shift.sh" [ ];
     "tmux-new-named-window.sh" = tmuxScript "new-named-window.sh" [ ];
@@ -132,6 +136,15 @@ let
       scripts."caelestia-color.sh"
       fzf
     ];
+    "tmux-popup-move-window.sh" = tmuxScript "popup-move-window.sh" [
+      scripts."caelestia-color.sh"
+      scripts."tmux-popup-move-window-picker.sh"
+    ];
+    "tmux-popup-move-window-picker.sh" = tmuxScript "popup-move-window-picker.sh" [
+      scripts."caelestia-color.sh"
+      fzf
+      gawk
+    ];
     "tmux-popup-lazygit.sh" = tmuxScript "popup-lazygit.sh" [ scripts."caelestia-color.sh" ];
     "tmux-popup-newwin.sh" = tmuxScript "popup-newwin.sh" [
       scripts."caelestia-color.sh"
@@ -142,6 +155,27 @@ let
       scripts."tmux-new-named-window.sh"
       zoxide
       fzf
+      findutils
+    ];
+    "tmux-pin-jump.sh" = tmuxScript "pin-jump.sh" [ gawk ];
+    "tmux-popup-pins.sh" = tmuxScript "popup-pins.sh" [
+      scripts."caelestia-color.sh"
+      scripts."tmux-popup-pins-picker.sh"
+    ];
+    "tmux-popup-pins-picker.sh" = tmuxScript "popup-pins-picker.sh" [ gawk ];
+    "tmux-popup-sessions.sh" = tmuxScript "popup-sessions.sh" [
+      scripts."caelestia-color.sh"
+      scripts."tmux-popup-sessions-picker.sh"
+    ];
+    "tmux-popup-sessions-picker.sh" = tmuxScript "popup-sessions-picker.sh" [
+      scripts."caelestia-color.sh"
+      fzf
+      gawk
+    ];
+    "tmux-layout-after-sidebar-remove.py" = py "tmux/tmux-layout-after-sidebar-remove.py" [ ];
+    "tmux-resurrect-drop-sidebars.sh" = tmuxScript "resurrect-drop-sidebars.sh" [
+      scripts."tmux-layout-after-sidebar-remove.py"
+      gawk
       findutils
     ];
     "tmux-popup-switcher.sh" = tmuxScript "popup-switcher.sh" [
