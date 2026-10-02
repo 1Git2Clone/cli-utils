@@ -1,15 +1,29 @@
 #!/bin/bash
 # fzf body for the move-window popup (bind M-m): move window $1 to another
-# session. The first row is always "new session: <query>", defaulting to the
-# window's own name, so Enter on a fresh query creates that session;
-# ctrl-j/k/n/p walk down to an existing one. A name that matches an existing
-# session moves the window there instead.
+# session. The first row defaults to the window's own name, unless that's
+# already the session you're in -- defaulting to it there would only ever
+# suggest moving the window nowhere, so it's left blank for you to type
+# instead. It relabels itself "existing session: <name>" once a name
+# (typed or default) already belongs to some other session.
 # `--list Q` is the fzf reload source (typing re-lists instead of filtering,
-# which is what keeps the "new" row pinned on top).
+# which is what keeps the top row pinned).
 CC=caelestia-color.sh
 export CUR_SESSION WIN_NAME
+default_name() {
+  if [ -n "$1" ]; then
+    printf '%s' "$1"
+  elif [ "$WIN_NAME" != "$CUR_SESSION" ]; then
+    printf '%s' "$WIN_NAME"
+  fi
+}
 list() {
-  printf 'NEW\t+ new session: %s\n' "${1:-$WIN_NAME}"
+  local name
+  name=$(default_name "$1")
+  if [ -n "$name" ] && tmux has-session -t "=$name" 2>/dev/null; then
+    printf 'NEW\t\xe2\x86\xa6 existing session: %s\n' "$name"
+  else
+    printf 'NEW\t+ new session: %s\n' "$name"
+  fi
   # grep exits 1 when nothing matches, which pipefail would turn into a failure.
   tmux list-sessions -F '#{session_name}' | grep -vxF "$CUR_SESSION" | grep -iF -- "$1" | awk '{print "S\t" $0}' || true
 }
@@ -29,16 +43,21 @@ out=$(list "" | fzf --disabled --print-query --no-sort --delimiter '\t' --with-n
     --header ' Type a name, Enter = new session ') || exit 0
 query=$(sed -n 1p <<<"$out")
 sel=$(sed -n 2p <<<"$out")
-[ "${sel%%$'\t'*}" = NEW ] && query=${query:-$WIN_NAME}
+
+name=$query
+[ "${sel%%$'\t'*}" = NEW ] && name=$(default_name "$query")
+[ "${sel%%$'\t'*}" = S ] && name=${sel#*$'\t'}
+
+# Nothing typed, nothing guessed, or it resolved to the session we're
+# already in: there's nowhere to move this window, so there's nothing to do.
+{ [ -z "$name" ] || [ "$name" = "$CUR_SESSION" ]; } && exit 0
 
 ph=
-if [ "${sel%%$'\t'*}" = NEW ] && ! tmux has-session -t "=$query" 2>/dev/null; then
+if ! tmux has-session -t "=$name" 2>/dev/null; then
   # A session can't exist without a window: create it with a placeholder,
   # move ours in, then drop the placeholder.
-  read -r target ph < <(tmux new-session -dP -F '#{session_id} #{window_id}' -s "$query")
+  read -r target ph < <(tmux new-session -dP -F '#{session_id} #{window_id}' -s "$name")
 else
-  name=$query
-  [ "${sel%%$'\t'*}" = S ] && name=${sel#*$'\t'}
   target="=$name"
 fi
 tmux move-window -a -s "$win" -t "$target:" && [ -n "$ph" ] && tmux kill-window -t "$ph"
