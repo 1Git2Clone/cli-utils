@@ -153,6 +153,15 @@ let
       fzf
       findutils
     ];
+    "tmux-popup-sessions.sh" = tmuxScript "popup-sessions.sh" [
+      scripts."caelestia-color.sh"
+      scripts."tmux-popup-sessions-picker.sh"
+    ];
+    "tmux-popup-sessions-picker.sh" = tmuxScript "popup-sessions-picker.sh" [
+      scripts."caelestia-color.sh"
+      fzf
+      gawk
+    ];
     "tmux-popup-switcher.sh" = tmuxScript "popup-switcher.sh" [
       scripts."caelestia-color.sh"
       scripts."tmux-popup-switcher-picker.sh"

@@ -14,6 +14,7 @@ list() {
   tmux list-sessions -F '#{session_name}' | grep -vxF "$CUR_SESSION" | grep -iF -- "$1" | awk '{print "S\t" $0}' || true
 }
 [ "$1" = --list ] && { list "$2"; exit; }
+{ read -r c1; read -r c2; read -r c3; } < <($CC primary secondary primaryFixedDim)
 
 win="$1"
 CUR_SESSION=$(tmux display -p -t "$win" '#{session_name}')
@@ -22,7 +23,7 @@ out=$(list "" | fzf --disabled --print-query --no-sort --delimiter '\t' --with-n
     --bind "change:reload($0 --list {q})+first" \
     --preview '[ {1} = S ] && tmux capture-pane -ep -t {2} | head -100' \
     --preview-window 'right:60%,border-rounded' \
-    --color "fg:$($CC primary),border:$($CC primary),pointer:$($CC secondary),hl:$($CC secondary),hl+:$($CC secondary),header:$($CC primaryFixedDim),prompt:$($CC primary),info:$($CC primary)" \
+    --color "fg:$c1,border:$c1,pointer:$c2,hl:$c2,hl+:$c2,header:$c3,prompt:$c1,info:$c1" \
     --border 'rounded' \
     --prompt '🔍 Move window to: ' \
     --header ' Type a name, Enter = new session ') || exit 0

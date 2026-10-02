@@ -1,8 +1,8 @@
 #!/bin/bash
-# Print a hex colour (with leading #) from the *live* Caelestia scheme,
-# read fresh from disk on every call so callers stay in sync with
+# Print hex colours (with leading #) from the *live* Caelestia scheme, one per
+# line, read fresh from disk on every call so callers stay in sync with
 # whatever scheme is currently active (no baked-in hex, no reload hooks).
-# Usage: caelestia-color.sh <key>   e.g. primary, secondary, primaryFixedDim
-key="$1"
+# Several keys in one call cost one process, not one each (popups call it hot).
+# Usage: caelestia-color.sh <key>...   e.g. primary secondary primaryFixedDim
 scheme="$HOME/.local/state/caelestia/scheme.json"
-jq -r --arg k "$key" '"#" + .colours[$k]' "$scheme"
+jq -r '.colours as $c | $ARGS.positional[] | "#" + $c[.]' "$scheme" --args "$@"
