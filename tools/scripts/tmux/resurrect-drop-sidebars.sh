@@ -7,7 +7,9 @@
 # workmux's own sidebar-off does (tmux-layout-after-sidebar-remove.py) --
 # a bare kill-pane instead hands all of it to whichever pane is the killed
 # pane's tree sibling, which is not necessarily what you want enlarged.
-last=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect/last
+# resurrect's own default, not XDG: it never looks there unless told to.
+dir=$(tmux show -gqv @resurrect-dir)
+last=${dir:-$HOME/.tmux/resurrect}/last
 [ -f "$last" ] || exit 0
 # Saved pane lines: pane, session, window, ..., pane_index ($6), ..., command ($10).
 awk -F'\t' '$1 == "pane" && $10 == "workmux" { print "pane-" $2 ":" $3 "." $6 }' "$last" |
