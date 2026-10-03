@@ -39,3 +39,8 @@ jobs:
 
       - name: nix flake check
         run: nix flake check --no-build --print-build-logs
+
+      # The one check `--no-build` skips that needs running: each test brings
+      # up its own tmux server on a private socket.
+      - name: tmux tests
+        run: nix build .#checks.x86_64-linux.tmux --print-build-logs

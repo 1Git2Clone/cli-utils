@@ -106,6 +106,11 @@
         };
 
         package = self.packages.${system}.default;
+
+        tmux = import ./tools/scripts/tmux/tests.nix {
+          pkgs = nixpkgs.legacyPackages.${system};
+          tools = self.packages.${system};
+        };
       });
 
       devShells = forAll (

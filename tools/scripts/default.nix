@@ -178,6 +178,13 @@ let
       gawk
       findutils
     ];
+    "tmux-claude-tag-pane.sh" = tmuxScript "claude-tag-pane.sh" [ jq ];
+    "tmux-resurrect-save-claude.sh" = tmuxScript "resurrect-save-claude.sh" [ gawk ];
+    # claude itself comes from PATH: it is whatever the user installed.
+    "tmux-resurrect-resume-claude.sh" = tmuxScript "resurrect-resume-claude.sh" [
+      gawk
+      gnused
+    ];
     "tmux-popup-switcher.sh" = tmuxScript "popup-switcher.sh" [
       scripts."caelestia-color.sh"
       scripts."tmux-popup-switcher-picker.sh"
