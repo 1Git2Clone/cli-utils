@@ -4,13 +4,13 @@
 CC=caelestia-color.sh
 { read -r c1; read -r c2; read -r c3; } < <($CC primary secondary primaryFixedDim)
 tmux list-windows -a -F '#{session_name}:#{window_index} #{window_name} #{pane_current_path}' |
-  fzf --ansi \
+  { fzf --ansi \
     --preview 'tmux capture-pane -ep -t {1} | head -100' \
     --preview-window 'right:60%,border-rounded' \
     --color "fg:$c1,border:$c1,pointer:$c2,hl:$c2,hl+:$c2,header:$c3,prompt:$c1,info:$c1" \
     --border 'rounded' \
     --prompt '🔍 Switch to: ' \
     --header ' Sessions / Windows ' \
-    --delimiter ' ' |
+    --delimiter ' ' || [ $? -eq 130 ]; } |
   cut -d' ' -f1 |
-  xargs tmux switch-client -t
+  xargs -r tmux switch-client -t

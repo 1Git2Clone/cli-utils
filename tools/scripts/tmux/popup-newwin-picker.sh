@@ -7,8 +7,8 @@ CC=caelestia-color.sh
   echo "$HOME"
   zoxide query -l
 } |
-  fzf \
+  { fzf \
     --color "fg:$c1,pointer:$c2,hl:$c2,hl+:$c2,header:$c3,prompt:$c1,info:$c1" \
     --prompt '  dir: ' \
-    --header ' New Window ' |
+    --header ' New Window ' || [ $? -eq 130 ]; } |
   xargs -r tmux-new-named-window.sh
