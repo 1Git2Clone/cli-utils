@@ -25,6 +25,8 @@ autosave=$(tmux show -gv status-right | grep -o '#([^)]*continuum_save\.sh)' || 
 tmux set-option -g status-right "$autosave#[fg=$PRIMARY,bg=$BACKGROUND]#[fg=$ON_PRIMARY,bg=$PRIMARY]  %H:%M  %d • %b • %y "
 tmux set-option -g pane-border-style "fg=$OUTLINE"
 tmux set-option -g pane-active-border-style "fg=$PRIMARY"
+# For popups opened without their own -S, like workmux's dashboard.
+tmux set-option -g popup-border-style "fg=$PRIMARY"
 
 for w in $(tmux list-windows -a -F '#{window_id}'); do
   for o in "${formats[@]}"; do
