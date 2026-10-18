@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod error;
+pub mod title;
 
 use std::ffi::OsString;
 use std::io::Write;
