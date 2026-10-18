@@ -6,6 +6,7 @@ pub mod error;
 pub mod info;
 pub mod layout;
 pub mod resolve;
+pub mod tags;
 pub mod title;
 pub mod ytdlp;
 
