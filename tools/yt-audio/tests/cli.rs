@@ -72,6 +72,13 @@ case " $* " in
 esac
 touch '{dir}/downloaded'
 case "$last" in *bad*) exit 1;; esac
+if [ -f '{dir}/input.opus' ]; then
+  while [ $# -gt 0 ]; do [ "$1" = -o ] && o="$2"; shift; done
+  p=$(printf %s "$o" | sed 's/%(ext)s$/opus/')
+  mkdir -p "$(dirname "$p")"
+  cp '{dir}/input.opus' "$p"
+  echo "$p"
+fi
 exit 0
 "#,
                 dir = dir.display()
@@ -83,6 +90,19 @@ exit 0
     }
 
     impl Fake {
+        /// Make downloads produce a 1s Opus file; false if ffmpeg is missing.
+        pub fn with_input(&self) -> bool {
+            std::process::Command::new("ffmpeg")
+                .args([
+                    "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc", "-t", "1",
+                ])
+                .args(["-c:a", "libopus"])
+                .arg(self.dir.join("input.opus"))
+                .stdin(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        }
+
         pub fn run(&self, args: &[&str]) -> (i32, String, String) {
             let (mut out, mut err) = (Vec::new(), Vec::new());
             let args: Vec<OsString> = ["--no-cookies"]
@@ -147,6 +167,67 @@ fn existing_file_is_skipped() {
     assert_eq!(code, 0, "{err}");
     assert!(format!("{out}{err}").contains("skipped"), "{err}");
     assert!(!f.dir.join("downloaded").exists());
+}
+
+#[test]
+fn partial_and_lookalike_files_are_not_skipped() {
+    let f = fake::fake("partial", "artist_dash.json", "NONE");
+    let album = f.dir.join("out/アリバイ");
+    std::fs::create_dir_all(&album).unwrap();
+    for name in ["アリバイ.opus.part", "アリバイ.live.opus", "アリバイ.webp"] {
+        std::fs::write(album.join(name), b"x").unwrap();
+    }
+    let out_dir = f.dir.join("out");
+    f.run(&["-o", out_dir.to_str().unwrap(), "https://y/a"]);
+    assert!(f.dir.join("downloaded").exists(), "download not attempted");
+}
+
+#[test]
+fn download_writes_resolved_tags() {
+    use lofty::prelude::*;
+    let f = fake::fake("tagged", "artist_dash.json", "NONE");
+    if !f.with_input() {
+        eprintln!("skipping: ffmpeg unavailable");
+        return;
+    }
+    let out_dir = f.dir.join("out");
+    let (code, _, err) = f.run(&["-o", out_dir.to_str().unwrap(), "https://y/a"]);
+    assert_eq!(code, 0, "{err}");
+    let file = out_dir.join("アリバイ/アリバイ.opus");
+    let tagged = lofty::read_from_path(&file).unwrap();
+    let tag = tagged.primary_tag().unwrap();
+    assert_eq!(tag.title().as_deref(), Some("アリバイ"));
+    assert_eq!(tag.get_strings(&ItemKey::TrackArtist).count(), 2);
+}
+
+#[test]
+fn playlist_download_failure_continues() {
+    let f = fake::fake("dlfail", "playlist_flat.json", "NONE");
+    if !f.with_input() {
+        eprintln!("skipping: ffmpeg unavailable");
+        return;
+    }
+    let out_dir = f.dir.join("out");
+    let (code, _, err) = f.run(&["-o", out_dir.to_str().unwrap(), "https://y/p"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("1 of 2 entries failed"), "{err}");
+    assert!(out_dir.join("アリバイ.opus").exists());
+}
+
+#[test]
+fn verbose_echoes_commands_to_err() {
+    let f = fake::fake("verbose", "artist_dash.json", "NONE");
+    let (_, _, err) = f.run(&["-n", "-v", "https://y/a"]);
+    assert!(err.contains("--ignore-config"), "{err}");
+}
+
+#[test]
+fn duplicate_destinations_get_numbered() {
+    let f = fake::fake("dupes", "playlist_flat.json", "NONE");
+    let (code, out, _) = f.run(&["-n", "https://y/p"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("/アリバイ.opus"), "{out}");
+    assert!(out.contains("/アリバイ (2).opus"), "{out}");
 }
 
 #[test]

@@ -10,6 +10,7 @@ pub mod tags;
 pub mod title;
 pub mod ytdlp;
 
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
@@ -116,8 +117,9 @@ where
     };
 
     let (mut total, mut failed, mut planned) = (0, 0, 0);
+    let mut seen = HashSet::new();
     for url in &cli.urls {
-        let entries = match list(url, &ctx) {
+        let entries = match list(url, &ctx, err) {
             Ok(entries) => entries,
             Err(error) => {
                 let _ = writeln!(err, "{PROG}: {url}: {error}");
@@ -128,7 +130,7 @@ where
         };
         for (entry, base, flat) in entries {
             total += 1;
-            match process_entry(&entry, &base, flat, &ctx) {
+            match process_entry(&entry, &base, flat, &ctx, &mut seen, err) {
                 Ok(Outcome::Planned(block)) => {
                     if planned > 0 {
                         let _ = writeln!(out);
@@ -162,8 +164,8 @@ where
 ///
 /// `flat` entries are written straight into the base dir (playlists);
 /// otherwise they get an album folder (single videos).
-fn list(url: &str, ctx: &Ctx) -> Result<Vec<(String, PathBuf, bool)>, Error> {
-    let json = ytdlp_run(ctx, &ytdlp::listing_args(url, &ctx.cookies))?;
+fn list(url: &str, ctx: &Ctx, err: &mut impl Write) -> Result<Vec<(String, PathBuf, bool)>, Error> {
+    let json = ytdlp_run(ctx, err, &ytdlp::listing_args(url, &ctx.cookies))?;
     Ok(match info::parse_listing(&json)? {
         Listing::Playlist { title, entries } => {
             let base = ctx
@@ -190,27 +192,51 @@ fn list(url: &str, ctx: &Ctx) -> Result<Vec<(String, PathBuf, bool)>, Error> {
 }
 
 /// Run yt-dlp, echoing the command under `-v` (never any cookie contents).
-fn ytdlp_run(ctx: &Ctx, args: &[String]) -> Result<String, Error> {
+fn ytdlp_run(ctx: &Ctx, err: &mut impl Write, args: &[String]) -> Result<String, Error> {
     if ctx.cli.verbose {
-        eprintln!("{PROG}: {} {}", ctx.ytdlp.to_string_lossy(), args.join(" "));
+        let _ = writeln!(
+            err,
+            "{PROG}: {} {}",
+            ctx.ytdlp.to_string_lossy(),
+            args.join(" ")
+        );
     }
     ytdlp::run(ctx.ytdlp, args)
 }
 
 /// Resolve, then plan, skip or download and tag one entry.
-fn process_entry(url: &str, base: &Path, flat: bool, ctx: &Ctx) -> Result<Outcome, Error> {
+fn process_entry(
+    url: &str,
+    base: &Path,
+    flat: bool,
+    ctx: &Ctx,
+    seen: &mut HashSet<PathBuf>,
+    err: &mut impl Write,
+) -> Result<Outcome, Error> {
     let cli = ctx.cli;
-    let video = info::parse_video(&ytdlp_run(ctx, &ytdlp::info_args(url, &ctx.cookies))?)?;
+    let video = info::parse_video(&ytdlp_run(ctx, err, &ytdlp::info_args(url, &ctx.cookies))?)?;
     // ponytail: no LLM guesser yet; the `llm` feature passes one here.
     let tags = resolve::resolve(&video, &ctx.overrides, None, false);
-    let dest = if flat {
-        base.join(sanitize(&tags.title.value))
-    } else {
-        destination(base, &tags.album.value, &tags.title.value)
+    // Entries sharing a destination within one run get " (2)", " (3)", ...
+    let mut n = 1;
+    let dest = loop {
+        let title = match n {
+            1 => tags.title.value.clone(),
+            _ => format!("{} ({n})", tags.title.value),
+        };
+        let dest = if flat {
+            base.join(sanitize(&title))
+        } else {
+            destination(base, &tags.album.value, &title)
+        };
+        if seen.insert(dest.clone()) {
+            break dest;
+        }
+        n += 1;
     };
 
     if !cli.force
-        && let Some(existing) = existing(&dest)
+        && let Some(existing) = existing(&dest, cli.fmt)
     {
         return Ok(Outcome::Skipped(existing));
     }
@@ -226,7 +252,7 @@ fn process_entry(url: &str, base: &Path, flat: bool, ctx: &Ctx) -> Result<Outcom
         &ctx.cookies,
         &cli.ytdlp_args,
     );
-    let stdout = ytdlp_run(ctx, &args)?;
+    let stdout = ytdlp_run(ctx, err, &args)?;
     let path = stdout
         .lines()
         .rev()
@@ -237,14 +263,26 @@ fn process_entry(url: &str, base: &Path, flat: bool, ctx: &Ctx) -> Result<Outcom
     Ok(Outcome::Downloaded(path))
 }
 
-/// A file named `dest.<anything>`, if one exists.
-fn existing(dest: &Path) -> Option<PathBuf> {
-    let stem = format!("{}.", dest.file_name()?.to_string_lossy());
-    std::fs::read_dir(dest.parent()?)
-        .ok()?
-        .flatten()
-        .find(|e| e.file_name().to_string_lossy().starts_with(&stem))
-        .map(|e| e.path())
+/// A finished audio file `dest.<ext>`, if one exists.
+///
+/// Only exact final names count, so `.part`, `.webp` and `Song.live.opus`
+/// leftovers do not make an entry look done.
+fn existing(dest: &Path, fmt: AudioFormat) -> Option<PathBuf> {
+    let exts: &[&str] = match fmt {
+        AudioFormat::Opus => &["opus"],
+        AudioFormat::M4a => &["m4a"],
+        AudioFormat::Mp3 => &["mp3"],
+        AudioFormat::Best => &[
+            "opus", "m4a", "mp3", "webm", "ogg", "aac", "flac", "wav", "mka",
+        ],
+    };
+    exts.iter().find_map(|ext| {
+        let mut name = dest.as_os_str().to_owned();
+        name.push(".");
+        name.push(ext);
+        let path = PathBuf::from(name);
+        path.is_file().then_some(path)
+    })
 }
 
 /// The `--dry-run` block for one entry.
