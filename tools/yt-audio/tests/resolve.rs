@@ -1,7 +1,5 @@
-use std::cell::Cell;
-
 use yt_audio::info::{Video, parse_video};
-use yt_audio::resolve::{Guess, Overrides, Source, resolve};
+use yt_audio::resolve::{Guess, Overrides, Source, needs_llm, resolve};
 
 fn video(json: &str) -> Video {
     parse_video(json).unwrap()
@@ -20,18 +18,16 @@ fn no_pattern() -> Video {
 }
 
 fn strs(v: &[&str]) -> Vec<String> {
-    v.iter().map(|s| s.to_string()).collect()
+    v.iter().map(ToString::to_string).collect()
 }
 
 #[test]
 fn topic_uses_youtube_fields() {
     let t = resolve(&topic(), &Overrides::default(), None, false);
     assert_eq!(t.artists.value, strs(&["Halozy", "Nanahira"]));
-    assert_eq!(t.artists.source, Source::YouTube);
+    assert_eq!(t.artists.source, Source::Site);
     assert_eq!(t.album.value, "Lucky 7");
-    assert_eq!(t.track_number, Some(3));
-    assert_eq!(t.date.as_deref(), Some("2016-08-12"));
-    assert_eq!(t.comment, "https://www.youtube.com/watch?v=topic1");
+    assert_eq!(t.album_artist(), Some("Halozy"));
 }
 
 #[test]
@@ -41,7 +37,7 @@ fn artist_dash_splits_feat() {
     assert_eq!(t.artists.source, Source::Pattern("artist-dash"));
     assert_eq!(t.title.value, "アリバイ");
     assert_eq!(t.album.value, "アリバイ");
-    assert_eq!(t.album_artist, "かめりあ");
+    assert_eq!(t.album_artist(), Some("かめりあ"));
 }
 
 #[test]
@@ -58,14 +54,13 @@ fn fallback_uses_channel_minus_topic() {
     assert_eq!(t.title.value, "ただの曲名");
     assert_eq!(t.title.source, Source::Fallback);
     assert_eq!(t.artists.value, strs(&["Some Channel"]));
-    assert_eq!(t.date.as_deref(), Some("2026-01-01"));
 }
 
 #[test]
 fn partial_youtube_fields_merge_per_field() {
     let v = video(include_str!("fixtures/partial.json"));
     let t = resolve(&v, &Overrides::default(), None, false);
-    assert_eq!(t.artists.source, Source::YouTube);
+    assert_eq!(t.artists.source, Source::Site);
     assert_eq!(t.title.value, "Lucky 7");
     assert_eq!(t.title.source, Source::Pattern("artist-dash"));
 }
@@ -79,60 +74,51 @@ fn override_wins() {
     let t = resolve(&topic(), &o, None, false);
     assert_eq!(t.title.value, "X");
     assert_eq!(t.title.source, Source::Override);
-    assert_eq!(t.artists.source, Source::YouTube);
+    assert_eq!(t.artists.source, Source::Site);
 }
 
-fn guess(_: &Video) -> Option<Guess> {
-    Some(Guess {
+fn guess() -> Guess {
+    Guess {
         artists: strs(&["Some Channel"]),
         title: Some("ただの曲名".into()),
         album: None,
-    })
+    }
 }
 
 #[test]
-fn llm_only_when_unresolved() {
-    let calls = Cell::new(0);
-    let llm = |v: &Video| {
-        calls.set(calls.get() + 1);
-        guess(v)
-    };
-    resolve(&topic(), &Overrides::default(), Some(&llm), false);
-    assert_eq!(calls.get(), 0);
+fn llm_needed_only_when_unresolved() {
+    let o = Overrides::default();
+    assert!(!needs_llm(&topic(), &o, false));
+    assert!(
+        !needs_llm(&topic(), &o, true),
+        "site fields outrank the LLM"
+    );
+    assert!(!needs_llm(&dash(), &o, false), "patterns fill both fields");
+    assert!(needs_llm(&dash(), &o, true));
+    assert!(needs_llm(&no_pattern(), &o, false));
 
-    let t = resolve(&no_pattern(), &Overrides::default(), Some(&llm), false);
-    assert_eq!(calls.get(), 1);
+    let t = resolve(&no_pattern(), &o, Some(&guess()), false);
     assert_eq!(t.title.source, Source::Llm);
     assert_eq!(t.artists.source, Source::Llm);
     assert_eq!(t.artists.value, strs(&["Some Channel"]));
 }
 
 #[test]
-fn llm_always_outranks_pattern_not_youtube() {
-    let llm = |_: &Video| {
-        Some(Guess {
-            artists: vec![],
-            title: Some("LLM".into()),
-            album: None,
-        })
+fn llm_always_outranks_pattern_not_site() {
+    let g = Guess {
+        title: Some("LLM".into()),
+        ..Guess::default()
     };
-    let t = resolve(&dash(), &Overrides::default(), Some(&llm), true);
+    let t = resolve(&dash(), &Overrides::default(), Some(&g), true);
     assert_eq!(t.title.value, "LLM");
     assert_eq!(t.title.source, Source::Llm);
-    let t = resolve(&topic(), &Overrides::default(), Some(&llm), true);
-    assert_eq!(t.title.source, Source::YouTube);
+    assert_eq!(t.artists.source, Source::Pattern("artist-dash"));
+    let t = resolve(&topic(), &Overrides::default(), Some(&g), true);
+    assert_eq!(t.title.source, Source::Site);
 }
 
 #[test]
-fn date_format() {
-    let t = resolve(&topic(), &Overrides::default(), None, false);
-    assert_eq!(t.date.as_deref(), Some("2016-08-12"));
+fn source_display() {
     assert_eq!(Source::Pattern("p").to_string(), "pattern:p");
-}
-
-#[test]
-fn non_ascii_eight_byte_date_does_not_panic() {
-    let v = video(r#"{"id":"x","title":"t","webpage_url":"https://y/x","upload_date":"aéééb"}"#);
-    let t = resolve(&v, &Overrides::default(), None, false);
-    assert_eq!(t.date, None);
+    assert_eq!(Source::Site.to_string(), "site");
 }

@@ -1,9 +1,11 @@
 //! Command-line interface definition.
 
 use std::ffi::OsString;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
+use url::Url;
 
 /// Audio container/codec to extract.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -19,19 +21,20 @@ pub enum AudioFormat {
     Best,
 }
 
-/// Download YouTube audio with tidy tags and filenames.
+/// Download audio with yt-dlp, with tidy tags and filenames.
 #[derive(Debug, Parser)]
 #[command(name = "yt-audio", version)]
 pub struct Cli {
-    /// Video or playlist URLs.
+    /// Video or playlist URLs (any site yt-dlp supports).
     #[arg(value_name = "URL", required = true, num_args = 1..)]
-    pub urls: Vec<String>,
+    pub urls: Vec<Url>,
 
     /// Extra arguments passed to yt-dlp verbatim (after `--`).
     #[arg(last = true, value_name = "YTDLP_ARGS")]
     pub ytdlp_args: Vec<String>,
 
-    /// Read cookies from this browser (e.g. firefox).
+    /// Read cookies from this browser for every URL (e.g. firefox); by
+    /// default each site's cookies come from the first browser that has them.
     #[arg(long, value_name = "BROWSER")]
     pub cookies_from_browser: Option<String>,
 
@@ -59,6 +62,10 @@ pub struct Cli {
     #[arg(long)]
     pub album: Option<String>,
 
+    /// How many entries to fetch and download at once.
+    #[arg(short, long, value_name = "N", default_value = "4")]
+    pub jobs: NonZeroUsize,
+
     /// Re-download files that already exist.
     #[arg(long)]
     pub force: bool,
@@ -75,7 +82,7 @@ pub struct Cli {
     #[arg(short, long)]
     pub verbose: bool,
 
-    /// LLM backend: `openai` means any OpenAI-compatible endpoint.
+    /// LLM backend: `openai` speaks OpenAI's Responses API (OpenAI, `MiniMax`, ...).
     #[cfg(feature = "llm")]
     #[arg(long, value_enum, env = "YT_AUDIO_LLM_BACKEND", default_value_t)]
     pub llm_backend: LlmBackend,
@@ -83,7 +90,7 @@ pub struct Cli {
     /// LLM endpoint base URL.
     #[cfg(feature = "llm")]
     #[arg(long, env = "YT_AUDIO_LLM_URL")]
-    pub llm_url: Option<String>,
+    pub llm_url: Option<Url>,
 
     /// LLM model name; the LLM is used only when this is set.
     #[cfg(feature = "llm")]
@@ -103,7 +110,7 @@ pub enum LlmBackend {
     /// A local or remote Ollama server.
     #[default]
     Ollama,
-    /// Any OpenAI-compatible endpoint.
+    /// An endpoint serving OpenAI's Responses API (`/v1/responses`).
     Openai,
 }
 

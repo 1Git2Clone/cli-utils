@@ -1,4 +1,4 @@
-//! Download YouTube audio with tidy tags and filenames.
+//! Download audio with yt-dlp, with tidy tags and filenames.
 
 pub mod cli;
 pub mod cookies;
@@ -12,18 +12,22 @@ pub mod tags;
 pub mod title;
 pub mod ytdlp;
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use futures_util::{StreamExt, stream};
+use url::Url;
+
 use crate::cli::{AudioFormat, Cli};
-use crate::cookies::Cookies;
+use crate::cookies::{BrowserOrder, CookieChoice, Cookies};
 use crate::error::Error;
-use crate::info::Listing;
+use crate::info::{Listing, Video};
 use crate::layout::{destination, sanitize};
-use crate::resolve::{Overrides, Tags};
+use crate::resolve::{Guess, Overrides, Tags};
 
 /// Program name used in diagnostics.
 const PROG: &str = "yt-audio";
@@ -35,6 +39,21 @@ pub fn is_root() -> bool {
     std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
 }
 
+/// One video to fetch, and where its file goes.
+struct Entry {
+    url: Url,
+    base: PathBuf,
+    /// Straight into `base` (playlists) rather than an album folder.
+    flat: bool,
+}
+
+/// An entry with its metadata and resolved tags.
+struct Resolved {
+    entry: Entry,
+    video: Video,
+    tags: Tags,
+}
+
 /// What happened to one entry.
 enum Outcome {
     Downloaded(PathBuf),
@@ -44,38 +63,71 @@ enum Outcome {
 }
 
 /// Per-run settings shared by every entry.
-struct Ctx<'a> {
+struct Ctx<'a, W> {
     cli: &'a Cli,
-    cookies: Cookies,
+    cookies: CookieChoice,
     ytdlp: &'a OsStr,
     overrides: Overrides,
-    /// The LLM guesser and whether it outranks title patterns.
+    /// Diagnostics; entries run concurrently on one thread and only borrow it
+    /// between awaits.
+    err: RefCell<&'a mut W>,
     #[cfg(feature = "llm")]
-    llm: Option<(Box<resolve::LlmFn<'static>>, bool)>,
+    llm: Option<(llm::Guesser, bool)>,
+}
+
+impl<W: Write> Ctx<'_, W> {
+    /// Print one diagnostic line.
+    fn say(&self, msg: std::fmt::Arguments) {
+        let _ = writeln!(self.err.borrow_mut(), "{PROG}: {msg}");
+    }
+
+    /// A warning or progress line, silenced by `-q`.
+    fn note(&self, msg: std::fmt::Arguments) {
+        if !self.cli.quiet {
+            self.say(msg);
+        }
+    }
+
+    /// Run yt-dlp, echoing the command under `-v` (never any cookie contents).
+    async fn ytdlp(&self, args: &[String]) -> Result<String, Error> {
+        if self.cli.verbose {
+            self.say(format_args!(
+                "{} {}",
+                self.ytdlp.to_string_lossy(),
+                args.join(" ")
+            ));
+        }
+        ytdlp::run(self.ytdlp, args, None).await
+    }
 }
 
 /// Run the CLI, writing reports to `out` and diagnostics to `err`.
 ///
 /// Returns the process exit code: `0` on success, `1` on a runtime failure,
 /// or `2` on a usage error.
-pub fn run<I, S>(args: I, out: &mut impl Write, err: &mut impl Write) -> i32
+pub async fn run<I, S>(args: I, out: &mut impl Write, err: &mut impl Write) -> i32
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    run_with(args, out, err, OsStr::new("yt-dlp"))
+    run_with(args, out, err, OsStr::new("yt-dlp")).await
 }
 
 /// Like [`run`], but with the yt-dlp program to execute (for tests).
-pub fn run_with<I, S>(args: I, out: &mut impl Write, err: &mut impl Write, ytdlp: &OsStr) -> i32
+pub async fn run_with<I, S, W: Write>(
+    args: I,
+    out: &mut impl Write,
+    err: &mut W,
+    ytdlp: &OsStr,
+) -> i32
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    let mut argv = vec![OsString::from(PROG)];
-    argv.extend(args.into_iter().map(Into::into));
+    let mut command_line = vec![OsString::from(PROG)];
+    command_line.extend(args.into_iter().map(Into::into));
 
-    let cli = match Cli::parse_from(argv) {
+    let cli = match Cli::parse_from(command_line) {
         Ok(command) => command,
         Err(error) => {
             let code = error.exit_code();
@@ -95,24 +147,28 @@ where
     }
 
     let cookies = if cli.no_cookies {
-        Cookies::None
+        CookieChoice::Fixed(Cookies::None)
     } else if let Some(spec) = &cli.cookies_from_browser {
-        Cookies::Browser(spec.clone())
+        CookieChoice::Fixed(Cookies::Browser(spec.clone()))
     } else {
-        let found = std::env::var_os("HOME").map_or(Cookies::None, |home| {
-            cookies::detect(Path::new(&home), ytdlp)
-        });
-        if found == Cookies::None && !cli.quiet {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let choice = match home {
+            Some(home) => {
+                cookies::detect(&home, ytdlp, &cli.urls[0], &BrowserOrder::default()).await
+            }
+            None => CookieChoice::Fixed(Cookies::None),
+        };
+        if (choice.is_empty() || matches!(choice, CookieChoice::Fixed(_))) && !cli.quiet {
             let _ = writeln!(
                 err,
-                "{PROG}: no browser with a YouTube login found; continuing without cookies"
+                "{PROG}: no browser has cookies for these sites; continuing without cookies"
             );
         }
-        found
+        choice
     };
     #[cfg(feature = "llm")]
-    let llm = llm::LlmConfig::from_cli(&cli).and_then(|c| match llm::make_guesser(&c) {
-        Ok(f) => Some((Box::new(f) as Box<resolve::LlmFn<'static>>, c.always)),
+    let llm = llm::LlmConfig::from_cli(&cli).and_then(|c| match llm::Guesser::new(&c) {
+        Ok(g) => Some((g, c.always)),
         Err(error) => {
             let _ = writeln!(err, "{PROG}: llm disabled: {error}");
             None
@@ -127,160 +183,217 @@ where
             title: cli.title.clone(),
             album: cli.album.clone(),
         },
+        err: RefCell::new(err),
         #[cfg(feature = "llm")]
         llm,
     };
+    process(&ctx, out).await
+}
 
-    let (mut total, mut failed, mut planned) = (0, 0, 0);
-    let mut seen = HashSet::new();
-    for url in &cli.urls {
-        let entries = match list(url, &ctx, err) {
-            Ok(entries) => entries,
+/// List, resolve, place and download every entry; returns the exit code.
+async fn process<W: Write>(ctx: &Ctx<'_, W>, out: &mut impl Write) -> i32 {
+    let jobs = ctx.cli.jobs.get();
+    let (mut total, mut failed) = (0, 0);
+
+    let mut entries = Vec::new();
+    let mut listings = stream::iter(&ctx.cli.urls)
+        .map(|url| async move { (url, list(url, ctx).await) })
+        .buffered(jobs);
+    while let Some((url, listed)) = listings.next().await {
+        match listed {
+            Ok((found, missing)) => {
+                if missing > 0 {
+                    ctx.say(format_args!("{url}: {missing} entries have no URL"));
+                }
+                total += missing;
+                failed += missing;
+                entries.extend(found);
+            }
             Err(error) => {
-                let _ = writeln!(err, "{PROG}: {url}: {error}");
+                ctx.say(format_args!("{url}: {error}"));
                 total += 1;
                 failed += 1;
-                continue;
             }
-        };
-        for (entry, base, flat) in entries {
-            total += 1;
-            match process_entry(&entry, &base, flat, &ctx, &mut seen, err) {
-                Ok(Outcome::Planned(block)) => {
-                    if planned > 0 {
-                        let _ = writeln!(out);
-                    }
-                    planned += 1;
-                    let _ = write!(out, "{block}");
+        }
+    }
+    total += entries.len();
+
+    // Resolve concurrently, then place in order so " (2)" numbering is stable.
+    let mut resolved = Vec::new();
+    let mut fetches = stream::iter(entries)
+        .map(|e| resolve_entry(e, ctx))
+        .buffered(jobs);
+    while let Some(r) = fetches.next().await {
+        match r {
+            Ok(r) => resolved.push(r),
+            Err((url, error)) => {
+                ctx.say(format_args!("{url}: {error}"));
+                failed += 1;
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    let placed: Vec<(PathBuf, Resolved)> = resolved
+        .into_iter()
+        .map(|r| (place(&r, &mut seen), r))
+        .collect();
+
+    let mut planned = 0;
+    let mut finishes = stream::iter(placed)
+        .map(|(dest, r)| async move {
+            let url = r.entry.url.clone();
+            (url, finish(dest, r, ctx).await)
+        })
+        .buffered(jobs);
+    while let Some((url, outcome)) = finishes.next().await {
+        match outcome {
+            Ok(Outcome::Planned(block)) => {
+                if planned > 0 {
+                    let _ = writeln!(out);
                 }
-                Ok(Outcome::Downloaded(path)) if !cli.quiet => {
-                    let _ = writeln!(err, "{PROG}: wrote {}", path.display());
-                }
-                Ok(Outcome::Skipped(path)) if !cli.quiet => {
-                    let _ = writeln!(err, "{PROG}: skipped (exists): {}", path.display());
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    let _ = writeln!(err, "{PROG}: {entry}: {error}");
-                    failed += 1;
-                }
+                planned += 1;
+                let _ = write!(out, "{block}");
+            }
+            Ok(Outcome::Downloaded(path)) => {
+                ctx.note(format_args!("wrote {}", path.display()));
+            }
+            Ok(Outcome::Skipped(path)) => {
+                ctx.note(format_args!("skipped (exists): {}", path.display()));
+            }
+            Err(error) => {
+                ctx.say(format_args!("{url}: {error}"));
+                failed += 1;
             }
         }
     }
 
     if failed > 0 {
-        let _ = writeln!(err, "{PROG}: {failed} of {total} entries failed");
+        ctx.say(format_args!("{failed} of {total} entries failed"));
         return 1;
     }
     0
 }
 
-/// Expand a CLI URL into `(entry url, base dir, flat)` triples.
-///
-/// `flat` entries are written straight into the base dir (playlists);
-/// otherwise they get an album folder (single videos).
-fn list(url: &str, ctx: &Ctx, err: &mut impl Write) -> Result<Vec<(String, PathBuf, bool)>, Error> {
-    let json = ytdlp_run(ctx, err, &ytdlp::listing_args(url, &ctx.cookies))?;
-    Ok(match info::parse_listing(&json)? {
-        Listing::Playlist { title, entries } => {
-            let base = ctx
-                .cli
-                .output_dir
-                .clone()
-                .unwrap_or_else(|| Path::new(".").join(sanitize(&title)));
-            entries
+/// Expand a CLI URL into its entries, plus how many had no URL.
+async fn list<W: Write>(url: &Url, ctx: &Ctx<'_, W>) -> Result<(Vec<Entry>, usize), Error> {
+    let args = ytdlp::listing_args(url, &ctx.cookies.for_url(url));
+    let output_dir = ctx.cli.output_dir.clone();
+    Ok(match info::parse_listing(&ctx.ytdlp(&args).await?)? {
+        Listing::Playlist {
+            title,
+            entries,
+            missing,
+        } => {
+            let base = output_dir.unwrap_or_else(|| Path::new(".").join(sanitize(&title)));
+            let entries = entries
                 .into_iter()
-                .map(|e| (e, base.clone(), true))
-                .collect()
+                .map(|url| Entry {
+                    url,
+                    base: base.clone(),
+                    flat: true,
+                })
+                .collect();
+            (entries, missing)
         }
-        Listing::Single(video) => {
-            let base = ctx.cli.output_dir.clone().unwrap_or_else(|| ".".into());
-            // The listing gave the canonical URL; fall back to what was typed.
-            let video = if video.is_empty() {
-                url.to_string()
-            } else {
-                video
+        Listing::Single(canonical) => {
+            let entry = Entry {
+                url: canonical.unwrap_or_else(|| url.clone()),
+                base: output_dir.unwrap_or_else(|| ".".into()),
+                flat: false,
             };
-            vec![(video, base, false)]
+            (vec![entry], 0)
         }
     })
 }
 
-/// Run yt-dlp, echoing the command under `-v` (never any cookie contents).
-fn ytdlp_run(ctx: &Ctx, err: &mut impl Write, args: &[String]) -> Result<String, Error> {
-    if ctx.cli.verbose {
-        let _ = writeln!(
-            err,
-            "{PROG}: {} {}",
-            ctx.ytdlp.to_string_lossy(),
-            args.join(" ")
-        );
-    }
-    ytdlp::run(ctx.ytdlp, args)
+/// Fetch an entry's metadata and resolve its tags.
+async fn resolve_entry<W: Write>(entry: Entry, ctx: &Ctx<'_, W>) -> Result<Resolved, (Url, Error)> {
+    let args = ytdlp::info_args(&entry.url, &ctx.cookies.for_url(&entry.url));
+    let video = match ctx.ytdlp(&args).await.and_then(|j| info::parse_video(&j)) {
+        Ok(video) => video,
+        Err(error) => return Err((entry.url, error)),
+    };
+    let (guess, always) = guess(&video, ctx).await;
+    let tags = resolve::resolve(&video, &ctx.overrides, guess.as_ref(), always);
+    Ok(Resolved { entry, video, tags })
 }
 
-/// Resolve, then plan, skip or download and tag one entry.
-fn process_entry(
-    url: &str,
-    base: &Path,
-    flat: bool,
-    ctx: &Ctx,
-    seen: &mut HashSet<PathBuf>,
-    err: &mut impl Write,
-) -> Result<Outcome, Error> {
-    let cli = ctx.cli;
-    let video = info::parse_video(&ytdlp_run(ctx, err, &ytdlp::info_args(url, &ctx.cookies))?)?;
-    #[cfg(feature = "llm")]
-    let (guesser, always) = ctx
-        .llm
-        .as_ref()
-        .map_or((None, false), |(f, always)| (Some(&**f), *always));
-    #[cfg(not(feature = "llm"))]
-    let (guesser, always) = (None, false);
-    let tags = resolve::resolve(&video, &ctx.overrides, guesser, always);
-    // Entries sharing a destination within one run get " (2)", " (3)", ...
+/// The LLM's guess when one is configured and needed, and whether it
+/// outranks title patterns. A failed call is a warning, not an entry failure.
+#[cfg(feature = "llm")]
+async fn guess<W: Write>(v: &Video, ctx: &Ctx<'_, W>) -> (Option<Guess>, bool) {
+    let Some((guesser, always)) = &ctx.llm else {
+        return (None, false);
+    };
+    if !resolve::needs_llm(v, &ctx.overrides, *always) {
+        return (None, *always);
+    }
+    match guesser.guess(v).await {
+        Ok(g) => (Some(g), *always),
+        Err(error) => {
+            ctx.note(format_args!("{}: llm: {error}", v.webpage_url));
+            (None, *always)
+        }
+    }
+}
+
+#[cfg(not(feature = "llm"))]
+async fn guess<W: Write>(_: &Video, _: &Ctx<'_, W>) -> (Option<Guess>, bool) {
+    (None, false)
+}
+
+/// The destination (without extension) for `r`; entries sharing one within a
+/// run get " (2)", " (3)", ... in listing order.
+fn place(r: &Resolved, seen: &mut HashSet<PathBuf>) -> PathBuf {
+    let mut title = r.tags.title.value.clone();
     let mut n = 1;
-    let dest = loop {
-        let title = match n {
-            1 => tags.title.value.clone(),
-            _ => format!("{} ({n})", tags.title.value),
-        };
-        let dest = if flat {
-            base.join(sanitize(&title))
+    loop {
+        let dest = if r.entry.flat {
+            r.entry.base.join(sanitize(&title))
         } else {
-            destination(base, &tags.album.value, &title)
+            destination(&r.entry.base, &r.tags.album.value, &title)
         };
         if seen.insert(dest.clone()) {
-            break dest;
+            return dest;
         }
         n += 1;
-    };
+        title = format!("{} ({n})", r.tags.title.value);
+    }
+}
 
+/// Skip, plan, or download and tag one placed entry.
+async fn finish<W: Write>(dest: PathBuf, r: Resolved, ctx: &Ctx<'_, W>) -> Result<Outcome, Error> {
+    let cli = ctx.cli;
     if !cli.force
         && let Some(existing) = existing(&dest, cli.fmt)
     {
         return Ok(Outcome::Skipped(existing));
     }
     if cli.dry_run {
-        return Ok(Outcome::Planned(report(&dest, cli.fmt, &tags)));
+        return Ok(Outcome::Planned(report(&dest, cli.fmt, &r.tags)));
     }
 
+    let cookies = ctx.cookies.for_url(&r.entry.url);
     let args = ytdlp::download_args(
-        url,
+        &r.entry.url,
         &dest,
         cli.fmt,
         cli.force,
-        &ctx.cookies,
+        &cookies,
         &cli.ytdlp_args,
     );
-    let stdout = ytdlp_run(ctx, err, &args)?;
+    let stdout = ctx.ytdlp(&args).await?;
     let path = stdout
         .lines()
         .rev()
-        .find(|l| !l.trim().is_empty())
-        .ok_or_else(|| Error::Io(std::io::Error::other("yt-dlp printed no output path")))?;
-    let path = PathBuf::from(path.trim());
-    tags::write_tags(&path, &tags)?;
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .ok_or(Error::NoOutputPath)?;
+    let written = path.clone();
+    tokio::task::spawn_blocking(move || tags::write_tags(&written, &r.tags, &r.video))
+        .await
+        .map_err(std::io::Error::other)??;
     Ok(Outcome::Downloaded(path))
 }
 
@@ -323,6 +436,6 @@ fn report(dest: &Path, fmt: AudioFormat, t: &Tags) -> String {
         t.artists.source,
         t.album.value,
         t.album.source,
-        t.album_artist,
+        t.album_artist().unwrap_or_default(),
     )
 }

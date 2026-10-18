@@ -1,4 +1,4 @@
-//! Pull an artist and title out of a YouTube video title.
+//! Pull an artist and title out of a video title.
 
 /// Bracketed text that is promotional noise when it is exactly one of these
 /// (case-insensitive). `official ...` and `mv`/`pv` prefixes are handled in
@@ -55,13 +55,11 @@ pub fn strip_noise(title: &str) -> String {
                 let end = inner.find(close)?;
                 is_noise(&inner[..end]).then_some(open.len_utf8() + end + close.len_utf8())
             });
-        match group {
-            Some(len) => rest = &rest[len..],
-            None => {
-                out.push(c);
-                rest = &rest[c.len_utf8()..];
-            }
-        }
+        let skip = group.unwrap_or_else(|| {
+            out.push(c);
+            c.len_utf8()
+        });
+        rest = &rest[skip..];
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -166,8 +164,8 @@ pub fn split_artists(s: &str) -> Vec<String> {
             piece = &piece[..piece.len() - last];
             in_group = false;
         }
-        if !piece.is_empty() {
-            names.last_mut().expect("never empty").push(piece);
+        if let Some(name) = names.last_mut().filter(|_| !piece.is_empty()) {
+            name.push(piece);
         }
     }
     names

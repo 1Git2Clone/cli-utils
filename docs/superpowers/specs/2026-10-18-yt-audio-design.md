@@ -244,3 +244,31 @@ modelled on `~/Projects/serenity-discord-bot/.forgejo/workflows/ci.yml`:
 Crate layout inside `src/`, exact pattern list beyond the listed ones, how
 cookies are probed, the tag-writing crate, workspace vs. two manifests, CI
 toolchain source, timeouts, and output formatting of `--dry-run`.
+
+## Revision 2026-10-18 (review feedback)
+
+These supersede the sections above where they differ.
+
+- **Not YouTube-only.** Any site yt-dlp supports. URLs are `url::Url`
+  throughout (CLI, yt-dlp JSON, LLM endpoint); no YouTube URL is ever built.
+  "YouTube's music fields" becomes "the site's music fields" (source `site`).
+- **Cookies per site.** The default browser order is a typed `BrowserOrder`
+  with a `Default` impl. Each browser's jar is exported once and reduced to
+  the sites it has cookies for (domains only); each URL gets the first browser
+  serving its site, requiring a login cookie where the names are known
+  (YouTube). Sites are the host's last two labels.
+- **Async.** tokio is a normal dependency (no longer `llm`-only). Entries are
+  listed, resolved and downloaded concurrently, bounded by `-j/--jobs`
+  (default 4), and reported in listing order; duplicate-title numbering is
+  assigned sequentially so it stays deterministic.
+- **Typed data.** Dates are `jiff::civil::Date` parsed from yt-dlp's
+  `YYYYMMDD` (malformed reads as absent); the written date is a
+  `RecordingDate` (day or year). `Tags` holds only resolved values; album
+  artist, date, track number and source URL are derived from the video when
+  writing. yt-dlp errors keep the full stderr and show the tail on display.
+- **LLM via a forced tool call** rather than parsing reply text: the model
+  must call `set_metadata`, whose arguments are deserialised directly. The
+  `openai` backend speaks the Responses API (`/v1/responses`). `resolve` is
+  pure; `needs_llm` decides whether to ask.
+- **CI.** yt-audio has its own workflow (Forgejo and GitHub twins) triggered
+  by its paths; all actions are pinned to commit SHAs.

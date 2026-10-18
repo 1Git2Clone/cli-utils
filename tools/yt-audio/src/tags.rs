@@ -5,9 +5,10 @@ use std::path::Path;
 use lofty::config::WriteOptions;
 use lofty::file::TaggedFileExt;
 use lofty::probe::Probe;
-use lofty::tag::{ItemKey, Tag, TagExt};
+use lofty::tag::{ItemKey, ItemValue, Tag, TagExt, TagItem};
 
 use crate::error::Error;
+use crate::info::Video;
 use crate::resolve::Tags;
 
 /// Keys this module owns; cleared before writing so stale values never linger.
@@ -22,33 +23,40 @@ const OWNED: [ItemKey; 8] = [
     ItemKey::TrackNumber,
 ];
 
-/// Write `t` into the audio file at `path`, one `TrackArtist` per artist.
+/// Write `t`, plus the date, track number and source URL of `v`, into the
+/// audio file at `path`, one `ItemKey::TrackArtist` per artist.
 ///
 /// Embedded pictures and any other existing tag items are left untouched.
-pub fn write_tags(path: &Path, t: &Tags) -> Result<(), Error> {
-    let mut file = Probe::open(path)?.read()?;
-    if file.primary_tag().is_none() {
-        file.insert_tag(Tag::new(file.primary_tag_type()));
-    }
-    let tag = file.primary_tag_mut().expect("tag inserted above");
+///
+/// # Errors
+///
+/// Fails if the file cannot be read, parsed or written.
+pub fn write_tags(path: &Path, t: &Tags, v: &Video) -> Result<(), Error> {
+    let file = Probe::open(path)?.read()?;
+    let mut tag = file
+        .primary_tag()
+        .cloned()
+        .unwrap_or_else(|| Tag::new(file.primary_tag_type()));
 
     for key in OWNED {
         tag.remove_key(&key);
     }
     for artist in &t.artists.value {
-        tag.push(lofty::tag::TagItem::new(
+        tag.push(TagItem::new(
             ItemKey::TrackArtist,
-            lofty::tag::ItemValue::Text(artist.clone()),
+            ItemValue::Text(artist.clone()),
         ));
     }
     tag.insert_text(ItemKey::TrackTitle, t.title.value.clone());
     tag.insert_text(ItemKey::AlbumTitle, t.album.value.clone());
-    tag.insert_text(ItemKey::AlbumArtist, t.album_artist.clone());
-    if let Some(date) = &t.date {
-        tag.insert_text(ItemKey::RecordingDate, date.clone());
+    if let Some(artist) = t.album_artist() {
+        tag.insert_text(ItemKey::AlbumArtist, artist.to_owned());
     }
-    tag.insert_text(ItemKey::Comment, t.comment.clone());
-    if let Some(n) = t.track_number {
+    if let Some(date) = v.recording_date() {
+        tag.insert_text(ItemKey::RecordingDate, date.to_string());
+    }
+    tag.insert_text(ItemKey::Comment, v.webpage_url.to_string());
+    if let Some(n) = v.track_number {
         tag.insert_text(ItemKey::TrackNumber, n.to_string());
     }
 
@@ -59,13 +67,14 @@ pub fn write_tags(path: &Path, t: &Tags) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::info::parse_video;
     use crate::resolve::{Field, Source};
     use lofty::file::AudioFile;
     use lofty::picture::{Picture, PictureType};
     use std::process::{Command, Stdio};
 
     fn ffmpeg(args: &[&str], out: &Path) -> bool {
-        let _g = crate::ytdlp::SPAWN_LOCK.read().unwrap();
+        let _g = crate::ytdlp::SPAWN_LOCK.blocking_read();
         Command::new("ffmpeg")
             .args(["-v", "error", "-y"])
             .args(args)
@@ -75,23 +84,25 @@ mod tests {
             .is_ok_and(|s| s.success())
     }
 
-    fn sample() -> Tags {
+    fn sample() -> (Tags, Video) {
         let f = |v: &str| Field {
             value: v.to_string(),
             source: Source::Fallback,
         };
-        Tags {
+        let tags = Tags {
             artists: Field {
                 value: vec!["かめりあ".into(), "初音ミク".into()],
                 source: Source::Fallback,
             },
             title: f("曲"),
             album: f("Album"),
-            album_artist: "かめりあ".into(),
-            date: Some("2024".into()),
-            comment: "https://example.com".into(),
-            track_number: Some(3),
-        }
+        };
+        let video = parse_video(
+            r#"{"id":"x","title":"t","webpage_url":"https://example.com/v",
+                "release_year":2024,"track_number":3}"#,
+        )
+        .unwrap();
+        (tags, video)
     }
 
     fn dir() -> tempfile::TempDir {
@@ -99,7 +110,8 @@ mod tests {
     }
 
     fn check(file: &Path) {
-        write_tags(file, &sample()).unwrap();
+        let (tags, video) = sample();
+        write_tags(file, &tags, &video).unwrap();
         let read = Probe::open(file).unwrap().read().unwrap();
         let tag = read.primary_tag().unwrap();
         let artists: Vec<_> = tag.get_strings(&ItemKey::TrackArtist).collect();
@@ -110,12 +122,9 @@ mod tests {
         assert_eq!(tag.get_string(&ItemKey::TrackNumber), Some("3"));
         assert_eq!(
             tag.get_string(&ItemKey::Comment),
-            Some("https://example.com")
+            Some("https://example.com/v")
         );
-        assert!(
-            tag.get_string(&ItemKey::RecordingDate)
-                .is_some_and(|d| d.starts_with("2024"))
-        );
+        assert_eq!(tag.get_string(&ItemKey::RecordingDate), Some("2024"));
     }
 
     #[test]
