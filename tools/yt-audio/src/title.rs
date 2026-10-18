@@ -1,14 +1,11 @@
 //! Pull an artist and title out of a YouTube video title.
 
-/// Bracketed text that is promotional noise, matched case-insensitively as a
-/// prefix of the bracket's contents.
+/// Bracketed text that is promotional noise when it is exactly one of these
+/// (case-insensitive). `official ...` and `mv`/`pv` prefixes are handled in
+/// [`is_noise`].
 const NOISE: &[&str] = &[
     "mv",
     "pv",
-    "official video",
-    "official music video",
-    "official audio",
-    "official lyric video",
     "lyric video",
     "lyrics",
     "audio",
@@ -31,6 +28,18 @@ pub struct TitleGuess {
     pub pattern: &'static str,
 }
 
+/// Whether bracket contents are a promotional tag.
+fn is_noise(inner: &str) -> bool {
+    let lower = inner.trim().to_lowercase();
+    NOISE.contains(&lower.as_str())
+        || lower.starts_with("official ")
+        || ["mv", "pv"].iter().any(|p| {
+            lower
+                .strip_prefix(p)
+                .is_some_and(|r| r.chars().next().is_some_and(|c| !c.is_alphanumeric()))
+        })
+}
+
 /// Remove noise tags such as `【MV】` or `(Official Video)` and trim.
 ///
 /// Brackets with any other content are kept.
@@ -44,9 +53,7 @@ pub fn strip_noise(title: &str) -> String {
             .and_then(|&(open, close)| {
                 let inner = &rest[open.len_utf8()..];
                 let end = inner.find(close)?;
-                let lower = inner[..end].trim().to_lowercase();
-                let noisy = NOISE.iter().any(|n| lower.starts_with(n));
-                noisy.then_some(open.len_utf8() + end + close.len_utf8())
+                is_noise(&inner[..end]).then_some(open.len_utf8() + end + close.len_utf8())
             });
         match group {
             Some(len) => rest = &rest[len..],
@@ -76,52 +83,88 @@ pub fn parse_title(title: &str) -> Option<TitleGuess> {
     })
 }
 
-/// `Artist - Title`, splitting on the first dash.
-fn artist_dash(s: &str) -> Option<(String, String)> {
-    let (artist, title) = s.split_once(['-', '–', '—'])?;
+/// Trim both sides and require them to be non-empty.
+fn pair(artist: &str, title: &str) -> Option<(String, String)> {
     let (artist, title) = (artist.trim(), title.trim());
-    let title = ["「」", "『』"]
-        .iter()
-        .find_map(|b| {
-            let mut c = b.chars();
-            title.strip_prefix(c.next()?)?.strip_suffix(c.next()?)
-        })
-        .unwrap_or(title);
     (!artist.is_empty() && !title.is_empty()).then(|| (artist.into(), title.into()))
 }
 
-/// `Artist「Title」…`; anything after the closing bracket is dropped.
+/// Split `「Title」tail` / `『Title』tail` into the title and a featured-artist
+/// suffix (`" feat. X"`, or empty). Other trailing text is dropped.
+fn quoted(s: &str) -> Option<(&str, String)> {
+    let first = s.chars().next()?;
+    let close = match first {
+        '「' => '」',
+        '『' => '』',
+        _ => return None,
+    };
+    let (title, tail) = s[first.len_utf8()..].split_once(close)?;
+    let tail = tail.trim();
+    let (word, rest) = tail.split_once(char::is_whitespace).unwrap_or((tail, ""));
+    let feat = ["feat.", "ft.", "feat", "ft", "featuring"].contains(&word.to_lowercase().as_str());
+    let suffix = if feat && !rest.trim().is_empty() {
+        format!(" feat. {}", rest.trim())
+    } else {
+        String::new()
+    };
+    Some((title, suffix))
+}
+
+/// `Artist - Title`, splitting on the first spaced dash.
+fn artist_dash(s: &str) -> Option<(String, String)> {
+    let (at, len) = [" - ", " – ", " — "]
+        .iter()
+        .filter_map(|d| s.find(d).map(|i| (i, d.len())))
+        .min()?;
+    let (artist, title) = (s[..at].trim(), s[at + len..].trim());
+    match quoted(title) {
+        Some((t, suffix)) => pair(&format!("{artist}{suffix}"), t),
+        None => pair(artist, title),
+    }
+}
+
+/// `Artist「Title」…`; trailing text is dropped except a `feat.` credit.
 fn bracket_quote(s: &str) -> Option<(String, String)> {
-    let (open, close) = [('「', '」'), ('『', '』')]
-        .into_iter()
-        .filter_map(|(o, c)| s.find(o).map(|i| (i, (o, c))))
-        .min_by_key(|(i, _)| *i)
-        .map(|(_, p)| p)?;
-    let (artist, rest) = s.split_once(open)?;
-    let (title, _) = rest.split_once(close)?;
-    let (artist, title) = (artist.trim(), title.trim());
-    (!artist.is_empty() && !title.is_empty()).then(|| (artist.into(), title.into()))
+    let at = s.find(['「', '『'])?;
+    let (title, suffix) = quoted(&s[at..])?;
+    pair(&format!("{}{suffix}", s[..at].trim()), title)
 }
 
 /// `Title / Artist`, splitting on the last spaced slash.
 fn title_slash_artist(s: &str) -> Option<(String, String)> {
     let (title, artist) = s.rsplit_once(" / ")?;
-    let (artist, title) = (artist.trim(), title.trim());
-    (!artist.is_empty() && !title.is_empty()).then(|| (artist.into(), title.into()))
+    pair(artist, title)
 }
 
 /// Split an artist string on `feat`/`ft`/`featuring` and spaced `/`.
 ///
-/// Splits only on whole words, so `Daft Punk` stays whole; `&`, `x` and
-/// commas are left alone because they appear in real band names.
+/// Splits only on whole words (a `.` ends the word, and a bracketed
+/// `(feat. X)` group counts), so `Daft Punk` stays whole; `&`, `x` and commas
+/// are left alone because they appear in real band names.
 pub fn split_artists(s: &str) -> Vec<String> {
     let mut names = vec![Vec::new()];
+    let mut in_group = false;
     for word in s.split_whitespace() {
-        let lower = word.to_lowercase();
-        if word == "/" || matches!(lower.trim_end_matches('.'), "feat" | "ft" | "featuring") {
+        let bare = word.trim_start_matches(['(', '[', '（', '【']);
+        let opened = bare.len() != word.len();
+        let lower = bare.to_lowercase();
+        let keyword = ["featuring", "feat", "ft"].iter().find_map(|k| {
+            let r = lower.strip_prefix(k)?;
+            (r.is_empty() || r.starts_with('.')).then(|| &bare[k.len()..])
+        });
+        let mut piece = word;
+        if word == "/" || keyword.is_some() {
             names.push(Vec::new());
-        } else {
-            names.last_mut().expect("never empty").push(word);
+            piece = keyword.map_or("", |r| r.strip_prefix('.').unwrap_or(r));
+            in_group = opened;
+        }
+        if in_group && piece.ends_with([')', ']', '）', '】']) {
+            let last = piece.chars().next_back().map_or(0, char::len_utf8);
+            piece = &piece[..piece.len() - last];
+            in_group = false;
+        }
+        if !piece.is_empty() {
+            names.last_mut().expect("never empty").push(piece);
         }
     }
     names
@@ -160,7 +203,11 @@ mod tests {
     fn bracket_quote_drops_tail() {
         assert_eq!(
             guess("かめりあ「アリバイ」feat. 初音ミク"),
-            ("かめりあ".into(), "アリバイ".into(), "bracket-quote")
+            (
+                "かめりあ feat. 初音ミク".into(),
+                "アリバイ".into(),
+                "bracket-quote"
+            )
         );
     }
 
@@ -189,5 +236,39 @@ mod tests {
         assert_eq!(split_artists("Simon & Garfunkel"), ["Simon & Garfunkel"]);
         assert_eq!(split_artists("A x B, C"), ["A x B, C"]);
         assert_eq!(split_artists("Daft Punk"), ["Daft Punk"]);
+    }
+
+    #[test]
+    fn dash_needs_spaces() {
+        assert_eq!(guess("Jay-Z - Empire").0, "Jay-Z");
+        assert_eq!(guess("Jay-Z - Empire").1, "Empire");
+        assert_eq!(parse_title("Back-to-Black"), None);
+    }
+
+    #[test]
+    fn quoted_title_keeps_feat_tail() {
+        assert_eq!(
+            guess("かめりあ - 「アリバイ」 feat. 初音ミク"),
+            (
+                "かめりあ feat. 初音ミク".into(),
+                "アリバイ".into(),
+                "artist-dash"
+            )
+        );
+        assert_eq!(guess("かめりあ - 「アリバイ」 remix").0, "かめりあ");
+    }
+
+    #[test]
+    fn bracketed_and_tight_feat() {
+        assert_eq!(split_artists("A (feat. B)"), ["A", "B"]);
+        assert_eq!(split_artists("A feat.B"), ["A", "B"]);
+        assert_eq!(split_artists("A FEAT. B"), ["A", "B"]);
+    }
+
+    #[test]
+    fn noise_needs_word_boundary() {
+        assert_eq!(strip_noise("Song (HDR edit)"), "Song (HDR edit)");
+        assert_eq!(strip_noise("Song (Audio Drama)"), "Song (Audio Drama)");
+        assert_eq!(strip_noise("Song 【MV/Full】"), "Song");
     }
 }
