@@ -1,11 +1,13 @@
 //! Download YouTube audio with tidy tags and filenames.
 
 pub mod cli;
+pub mod cookies;
 pub mod error;
 pub mod info;
 pub mod layout;
 pub mod resolve;
 pub mod title;
+pub mod ytdlp;
 
 use std::ffi::OsString;
 use std::io::Write;

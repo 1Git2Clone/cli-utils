@@ -12,4 +12,17 @@ pub enum Error {
     /// yt-dlp's JSON output could not be parsed.
     #[error("unreadable yt-dlp JSON: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// yt-dlp could not be started or its output could not be read.
+    #[error("cannot run yt-dlp: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// yt-dlp exited unsuccessfully.
+    #[error("yt-dlp failed ({status}): {stderr_tail}")]
+    YtDlp {
+        /// Exit status as reported by the OS.
+        status: std::process::ExitStatus,
+        /// Last lines of yt-dlp's stderr.
+        stderr_tail: String,
+    },
 }
