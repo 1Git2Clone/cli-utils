@@ -21,7 +21,21 @@
 
       # Shared by the clippy, cargo-check and rustfmt hooks -- all three default
       # to settings.rust.cargoManifestPath. One line per Rust crate.
-      rustManifest = "tools/ls-posts/Cargo.toml";
+      rustManifest = "Cargo.toml";
+
+      # Both Rust crates build from the one workspace; each package selects its
+      # crate with `-p`.
+      rustSrc =
+        lib:
+        lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.unions [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./tools/ls-posts
+            ./tools/yt-audio
+          ];
+        };
 
       # One attribute per tool. The language is an implementation detail of this
       # function; only the attribute name is the public interface.
@@ -32,8 +46,16 @@
           ls-posts = pkgs.rustPlatform.buildRustPackage {
             pname = "ls-posts";
             version = "0.1.0";
-            src = ./tools/ls-posts;
-            cargoLock.lockFile = ./tools/ls-posts/Cargo.lock;
+            src = rustSrc pkgs.lib;
+            cargoLock.lockFile = ./Cargo.lock;
+            cargoBuildFlags = [
+              "-p"
+              "ls-posts"
+            ];
+            cargoTestFlags = [
+              "-p"
+              "ls-posts"
+            ];
 
             # nixpkgs' cargoSetupHook sets no CARGO_HOME, so cargo falls back to
             # its default of $HOME/.cargo -- and creates it, on any invocation,
@@ -64,12 +86,53 @@
               mainProgram = "ls-posts";
             };
           };
+
+          yt-audio = pkgs.rustPlatform.buildRustPackage {
+            pname = "yt-audio";
+            version = "0.1.0";
+            src = rustSrc pkgs.lib;
+            cargoLock.lockFile = ./Cargo.lock;
+            cargoBuildFlags = [
+              "-p"
+              "yt-audio"
+            ];
+            cargoTestFlags = [
+              "-p"
+              "yt-audio"
+            ];
+            buildFeatures = [ "llm" ];
+
+            # Same reason as ls-posts above.
+            preConfigure = ''
+              export CARGO_HOME="$NIX_BUILD_TOP/cargo-home"
+            '';
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postInstall = ''
+              wrapProgram $out/bin/yt-audio \
+                --prefix PATH : ${
+                  pkgs.lib.makeBinPath [
+                    pkgs.yt-dlp
+                    pkgs.ffmpeg
+                  ]
+                }
+            '';
+            meta = {
+              description = "Download YouTube audio with tidy tags and filenames";
+              license = pkgs.lib.licenses.mit;
+              mainProgram = "yt-audio";
+            };
+          };
         };
 
       packagesFor =
         pkgs:
         (toolsFor pkgs)
         // {
+          # Both variants install bin/yt-audio, so only the LLM-enabled one is
+          # in toolsFor (and hence the `default` bundle); this one stands alone.
+          yt-audio-no-llm = (toolsFor pkgs).yt-audio.overrideAttrs { buildFeatures = [ ]; };
+
           # One installable bundle, so a consumer needs a single home.packages
           # entry rather than one per tool.
           default = pkgs.symlinkJoin {

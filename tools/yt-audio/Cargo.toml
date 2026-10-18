@@ -1,0 +1,17 @@
+[package]
+name = "yt-audio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Download YouTube audio with tidy tags and filenames"
+license = "MIT"
+
+[features]
+llm = []
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "env"] }
+thiserror = "2.0"
+
+[lints.rust]
+unsafe_code = "forbid"
