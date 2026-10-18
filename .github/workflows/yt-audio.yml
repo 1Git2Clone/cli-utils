@@ -1,0 +1,63 @@
+# Twin of .forgejo/workflows/yt-audio.yml: clippy and tests for yt-audio,
+# with and without the `llm` feature, only when its sources change. Actions
+# are pinned to commit SHAs; the comment names the tag each one was.
+name: yt-audio
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/yt-audio/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/yt-audio.yml
+  pull_request:
+    paths:
+      - tools/yt-audio/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/yt-audio.yml
+  workflow_dispatch:
+
+concurrency:
+  group: yt-audio-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo:
+    name: "cargo (${{ matrix.features || 'default' }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["", "--features llm"]
+    env:
+      # Debug info buys nothing in CI and bloats the cache that is saved and
+      # restored on every run.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy
+
+      - name: Cache key for this matrix leg
+        id: ck
+        run: echo "k=$(printf '%s' '${{ matrix.features }}' | tr -cd '[:alnum:]' | cut -c1-32)" >> "$GITHUB_OUTPUT"
+
+      # Each matrix leg needs its OWN cache, or both legs hash to the same key
+      # and restore a target dir built for the other feature set. Sanitised to
+      # alphanumerics: the raw matrix value contains spaces.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ steps.ck.outputs.k }}
+
+      - run: cargo clippy -p yt-audio --all-targets ${{ matrix.features }} -- -D warnings
+
+      # Tests needing ffmpeg skip without it; those spawning sh scripts need sh.
+      - run: cargo test -p yt-audio ${{ matrix.features }}

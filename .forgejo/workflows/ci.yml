@@ -26,7 +26,7 @@ jobs:
       GIT_TERMINAL_PROMPT: "0"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The same hooks the local commit hook runs, so a green CI means a clean
       # `pre-commit run --all-files` on the developer's machine and vice versa.
@@ -52,45 +52,3 @@ jobs:
       # up its own tmux server on a private socket.
       - name: tmux tests
         run: nix build .#checks.x86_64-linux.tmux --print-build-logs
-
-  # yt-audio is a plain cargo crate in the workspace; the nix build above only
-  # covers it through checkPhase, so this adds clippy and both feature sets.
-  # Unverified on nix-node: dtolnay/rust-toolchain needs curl and a writable
-  # $HOME. If it fails there, fall back to `nix develop -c cargo clippy ...`
-  # (the default devShell has clippy; .#ci does not).
-  cargo:
-    name: "yt-audio (cargo ${{ matrix.features || 'default' }})"
-    runs-on: nix-node
-    strategy:
-      fail-fast: false
-      matrix:
-        features: ["", "--features llm"]
-    env:
-      # Debug info buys nothing in CI and bloats the cache that is saved and
-      # restored on every run.
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_TERM_COLOR: always
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-
-      - uses: https://github.com/dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache key for this matrix leg
-        id: ck
-        run: echo "k=$(printf '%s' '${{ matrix.features }}' | tr -cd '[:alnum:]' | cut -c1-32)" >> "$GITHUB_OUTPUT"
-
-      # Each matrix leg needs its OWN cache. Without this both legs hash to the
-      # same rust-cache key and overwrite each other, so a leg restores a target
-      # directory built for the other feature set and cargo rebuilds most of it.
-      # Sanitised to alphanumerics: the raw matrix value contains spaces.
-      - uses: https://github.com/Swatinem/rust-cache@v2
-        with:
-          key: ${{ steps.ck.outputs.k }}
-
-      - run: cargo clippy -p yt-audio --all-targets ${{ matrix.features }} -- -D warnings
-
-      # Tests needing ffmpeg skip without it; those spawning sh scripts need sh.
-      - run: cargo test -p yt-audio ${{ matrix.features }}
