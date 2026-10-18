@@ -1,8 +1,10 @@
 //! Finding a browser with a logged-in YouTube session.
 
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use crate::error::Error;
 use crate::ytdlp;
 
 /// Cookie source for yt-dlp.
@@ -49,13 +51,34 @@ pub fn candidates(home: &Path) -> Vec<String> {
     out
 }
 
+/// Time allowed for one browser probe.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Directory for a private jar: `$XDG_RUNTIME_DIR` when usable, else the
+/// system temp dir.
+fn jar_base() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 /// Pick the first candidate browser whose cookies hold a YouTube login.
 ///
-/// Each candidate is probed by having `program` (yt-dlp) export its cookie jar.
+/// Each candidate is probed by having `program` (yt-dlp) export its cookie jar
+/// (every cookie in the browser) into a fresh private directory that is
+/// removed when the probe ends, so no jar outlives or is reused across probes.
+/// Returns [`Cookies::None`] if nothing is logged in or `program` cannot be
+/// started.
 pub fn detect(home: &Path, program: &OsStr) -> Cookies {
-    let jar = std::env::temp_dir().join(format!("yt-audio-cookies-{}.txt", std::process::id()));
-    let mut found = Cookies::None;
     for spec in candidates(home) {
+        let Ok(dir) = tempfile::Builder::new()
+            .prefix("yt-audio-")
+            .tempdir_in(jar_base())
+        else {
+            return Cookies::None;
+        };
+        let jar = dir.path().join("cookies.txt");
         let mut args = vec!["--ignore-config".to_string()];
         args.extend(Cookies::Browser(spec.clone()).args());
         args.extend(["--cookies".into(), jar.display().to_string()]);
@@ -72,15 +95,14 @@ pub fn detect(home: &Path, program: &OsStr) -> Cookies {
             ]
             .map(String::from),
         );
-        let _ = ytdlp::run(program, &args);
-        let logged_in = std::fs::read_to_string(&jar).is_ok_and(|j| has_youtube_login(&j));
-        let _ = std::fs::remove_file(&jar);
-        if logged_in {
-            found = Cookies::Browser(spec);
-            break;
+        if let Err(Error::Io(_)) = ytdlp::run_with_timeout(program, &args, PROBE_TIMEOUT) {
+            return Cookies::None;
+        }
+        if std::fs::read_to_string(&jar).is_ok_and(|j| has_youtube_login(&j)) {
+            return Cookies::Browser(spec);
         }
     }
-    found
+    Cookies::None
 }
 
 #[cfg(test)]
@@ -113,6 +135,56 @@ mod tests {
                 format!("firefox:{}/.config/floorp", home.display()),
                 "chrome".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn detect_with_fake_program() {
+        use std::os::unix::fs::PermissionsExt;
+        let work = tempfile::tempdir().unwrap();
+        let marker = work.path().join("marker");
+        let script = work.path().join("fake-yt-dlp");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cookies) jar="$2";; --cookies-from-browser) b="$2";;
+  esac
+  shift
+done
+echo "$jar" >> '{}'
+[ "$b" = chrome ] && printf '.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tx\n' > "$jar"
+exit 0
+"#,
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let home = work.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        assert_eq!(
+            detect(&home, script.as_os_str()),
+            Cookies::Browser("chrome".into())
+        );
+        let seen = std::fs::read_to_string(&marker).unwrap();
+        let jars: Vec<&str> = seen.lines().collect();
+        assert_eq!(jars.len(), 2, "firefox then chrome");
+        assert_ne!(jars[0], jars[1], "fresh dir per probe");
+        for j in jars {
+            assert!(!Path::new(j).exists());
+            assert!(!Path::new(j).parent().unwrap().exists());
+        }
+    }
+
+    #[test]
+    fn detect_stops_when_program_missing() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(
+            detect(home.path(), OsStr::new("/nonexistent/yt-dlp")),
+            Cookies::None
         );
     }
 

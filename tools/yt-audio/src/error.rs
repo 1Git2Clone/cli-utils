@@ -25,4 +25,8 @@ pub enum Error {
         /// Last lines of yt-dlp's stderr.
         stderr_tail: String,
     },
+
+    /// yt-dlp did not finish within the allowed time and was killed.
+    #[error("yt-dlp timed out after {0:?}")]
+    Timeout(std::time::Duration),
 }

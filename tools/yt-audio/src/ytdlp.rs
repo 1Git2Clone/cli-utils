@@ -1,8 +1,10 @@
 //! yt-dlp command construction and execution.
 
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::cli::AudioFormat;
 use crate::cookies::Cookies;
@@ -73,21 +75,73 @@ pub fn download_args(
     args
 }
 
+/// Turn a finished process into its stdout, or [`Error::YtDlp`].
+fn finish(status: std::process::ExitStatus, stdout: &[u8], stderr: &[u8]) -> Result<String, Error> {
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        let tail = lines[lines.len().saturating_sub(STDERR_TAIL_LINES)..].join("\n");
+        return Err(Error::YtDlp {
+            status,
+            stderr_tail: tail,
+        });
+    }
+    Ok(String::from_utf8_lossy(stdout).into_owned())
+}
+
 /// Run `program` with `args`, returning its stdout.
 ///
 /// A non-zero exit becomes [`Error::YtDlp`] carrying the last lines of stderr.
 pub fn run(program: &OsStr, args: &[String]) -> Result<String, Error> {
     let output = Command::new(program).args(args).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let lines: Vec<&str> = stderr.lines().collect();
-        let tail = lines[lines.len().saturating_sub(STDERR_TAIL_LINES)..].join("\n");
-        return Err(Error::YtDlp {
-            status: output.status,
-            stderr_tail: tail,
-        });
+    finish(output.status, &output.stdout, &output.stderr)
+}
+
+/// Like [`run`], but kills the process and returns [`Error::Timeout`] if it
+/// has not exited after `timeout`.
+pub fn run_with_timeout(
+    program: &OsStr,
+    args: &[String],
+    timeout: Duration,
+) -> Result<String, Error> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    // Drain both pipes on threads so a chatty child cannot block on a full pipe.
+    fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    let out = child.stdout.take().map(drain);
+    let err = child.stderr.take().map(drain);
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let join = |h: Option<std::thread::JoinHandle<Vec<u8>>>| {
+        h.and_then(|h| h.join().ok()).unwrap_or_default()
+    };
+    // ponytail: a grandchild holding the pipes open could delay this join past
+    // the deadline; yt-dlp's helpers exit with it, so no process-group kill yet.
+    let (stdout, stderr) = (join(out), join(err));
+    match status {
+        Some(status) => finish(status, &stdout, &stderr),
+        None => Err(Error::Timeout(timeout)),
+    }
 }
 
 #[cfg(test)]
@@ -156,5 +210,23 @@ mod tests {
             run(OsStr::new("sh"), &s(&["-c", "echo hi"])).unwrap(),
             "hi\n"
         );
+    }
+
+    #[test]
+    fn timeout_kills_slow_process() {
+        let t = Instant::now();
+        let r = run_with_timeout(
+            OsStr::new("sh"),
+            &s(&["-c", "sleep 30"]),
+            Duration::from_secs(1),
+        );
+        assert!(matches!(r, Err(Error::Timeout(_))), "{r:?}");
+        assert!(t.elapsed() < Duration::from_secs(10));
+        let ok = run_with_timeout(
+            OsStr::new("sh"),
+            &s(&["-c", "echo hi"]),
+            Duration::from_secs(5),
+        );
+        assert_eq!(ok.unwrap(), "hi\n");
     }
 }
