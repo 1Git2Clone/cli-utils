@@ -1,0 +1,55 @@
+# yt-audio
+
+Download YouTube audio with tidy tags and filenames. yt-dlp fetches the audio
+and cover art; yt-audio resolves the metadata and writes the text tags itself,
+so multiple artists are stored as separate values.
+
+## Usage
+
+```console
+yt-audio https://www.youtube.com/watch?v=XWoaP3EQRoQ
+yt-audio -n <URL>                    # dry run: show tags and paths only
+yt-audio -o ~/Music --fmt m4a <URL>
+yt-audio --artist A --artist B <URL> # override artists
+yt-audio <URL> -- --limit-rate 1M    # extra yt-dlp download arguments
+```
+
+Each URL can be a video or a playlist. A video lands in
+`<output-dir or .>/<album>/<title>.<ext>`; a playlist in
+`<output-dir or ./<playlist title>>/<title>.<ext>`. Existing files are skipped
+unless `--force`. A failing entry is reported and the run continues; the exit
+code is 1 if any entry failed.
+
+## Formats
+
+`--fmt opus` (default) and `best` keep YouTube's stream without re-encoding;
+`m4a` and `mp3` re-encode.
+
+## Cookies
+
+Unless `--no-cookies` or `--cookies-from-browser <SPEC>` is given, the first
+browser with a YouTube login is used, probed in the order Firefox, Floorp,
+Zen, Chrome. Floorp and Zen are passed to yt-dlp as `firefox:<profile dir>`.
+None found: a warning, then no cookies.
+
+## Metadata sources
+
+First hit wins per field, and `--dry-run` shows which one won:
+
+1. CLI overrides (`--artist`, `--title`, `--album`)
+2. YouTube's music fields
+3. Title patterns (`Artist - Title`, `Title / Artist`, `Artist「Title」`)
+4. An LLM guess, if the `llm` feature is built and configured
+5. Fallback: the cleaned title, and the channel name as artist
+
+## LLM
+
+Only compiled with the `llm` feature. The API key is read from the
+`YT_AUDIO_LLM_KEY` environment variable, never from a flag.
+
+## Development
+
+```console
+cargo test       # inside `nix develop`; no network needed
+cargo test -- --ignored e2e_real_video   # needs network and yt-dlp
+```

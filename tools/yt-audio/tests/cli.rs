@@ -38,3 +38,126 @@ fn cookie_flags_conflict() {
     ]));
     assert_eq!(code, 2);
 }
+
+mod fake {
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    const FIX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+
+    /// A per-test work dir holding a fake yt-dlp.
+    pub struct Fake {
+        pub dir: PathBuf,
+        script: PathBuf,
+    }
+
+    /// `listing` is a fixture name; info for URLs containing `bad_info`
+    /// fails; downloads for URLs containing `bad` fail and others leave a
+    /// marker file `downloaded`.
+    pub fn fake(name: &str, listing: &str, bad_info: &str) -> Fake {
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("yt-dlp");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+for last; do :; done
+case " $* " in
+  *" --flat-playlist "*) cat '{FIX}/{listing}'; exit 0;;
+  *" -J "*) case "$last" in *{bad_info}*) echo boom >&2; exit 1;; esac
+            cat '{FIX}/artist_dash.json'; exit 0;;
+esac
+touch '{dir}/downloaded'
+case "$last" in *bad*) exit 1;; esac
+exit 0
+"#,
+                dir = dir.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Fake { dir, script }
+    }
+
+    impl Fake {
+        pub fn run(&self, args: &[&str]) -> (i32, String, String) {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let args: Vec<OsString> = ["--no-cookies"]
+                .iter()
+                .chain(args)
+                .map(OsString::from)
+                .collect();
+            let code = yt_audio::run_with(args, &mut out, &mut err, self.script.as_os_str());
+            (
+                code,
+                String::from_utf8(out).unwrap(),
+                String::from_utf8(err).unwrap(),
+            )
+        }
+    }
+}
+
+#[test]
+fn dry_run_single_prints_tags() {
+    let f = fake::fake("single", "artist_dash.json", "NONE");
+    let (code, out, _) = f.run(&["-n", "https://y/a"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("アリバイ"), "{out}");
+    assert!(out.contains("(pattern:artist-dash)"), "{out}");
+    assert!(out.contains("かめりあ; 初音ミク"), "{out}");
+}
+
+#[test]
+fn dry_run_playlist_uses_playlist_folder() {
+    let f = fake::fake("plist", "playlist_flat.json", "NONE");
+    let (code, out, _) = f.run(&["-n", "https://y/p"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("My Mix/"), "{out}");
+}
+
+#[test]
+fn output_dir_overrides_playlist_folder() {
+    let f = fake::fake("outdir", "playlist_flat.json", "NONE");
+    let (code, out, _) = f.run(&["-n", "-o", "/tmp/x", "https://y/p"]);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("/tmp/x/"), "{out}");
+    assert!(!out.contains("My Mix"), "{out}");
+}
+
+#[test]
+fn run_continues_after_entry_failure() {
+    let f = fake::fake("fail", "playlist_flat.json", "bad");
+    let (code, out, err) = f.run(&["-n", "https://y/p"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("1 of 2 entries failed"), "{err}");
+    assert!(out.contains("アリバイ"), "{out}");
+}
+
+#[test]
+fn existing_file_is_skipped() {
+    let f = fake::fake("skip", "artist_dash.json", "NONE");
+    let album = f.dir.join("out/アリバイ");
+    std::fs::create_dir_all(&album).unwrap();
+    std::fs::write(album.join("アリバイ.opus"), b"x").unwrap();
+    let out_dir = f.dir.join("out");
+    let (code, out, err) = f.run(&["-o", out_dir.to_str().unwrap(), "https://y/a"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(format!("{out}{err}").contains("skipped"), "{err}");
+    assert!(!f.dir.join("downloaded").exists());
+}
+
+#[test]
+#[ignore = "needs network and yt-dlp"]
+fn e2e_real_video() {
+    let (code, out, _) = run(args(&[
+        "-n",
+        "--no-cookies",
+        "https://www.youtube.com/watch?v=XWoaP3EQRoQ",
+    ]));
+    assert_eq!(code, 0);
+    assert!(out.contains("アリバイ"), "{out}");
+    assert!(out.contains("かめりあ; 初音ミク"), "{out}");
+}
