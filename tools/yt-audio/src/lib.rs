@@ -2,6 +2,8 @@
 
 pub mod cli;
 pub mod error;
+pub mod info;
+pub mod layout;
 pub mod title;
 
 use std::ffi::OsString;
