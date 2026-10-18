@@ -2,7 +2,7 @@
 name = "yt-audio"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Download YouTube audio with tidy tags and filenames"
 license = "MIT"
 

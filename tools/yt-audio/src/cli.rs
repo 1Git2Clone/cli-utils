@@ -23,7 +23,7 @@ pub enum AudioFormat {
 #[derive(Debug, Parser)]
 #[command(name = "yt-audio", version)]
 pub struct Cli {
-    /// Video, playlist or channel URLs.
+    /// Video or playlist URLs.
     #[arg(value_name = "URL", required = true, num_args = 1..)]
     pub urls: Vec<String>,
 
