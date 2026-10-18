@@ -5,6 +5,8 @@ pub mod cookies;
 pub mod error;
 pub mod info;
 pub mod layout;
+#[cfg(feature = "llm")]
+pub mod llm;
 pub mod resolve;
 pub mod tags;
 pub mod title;
@@ -47,6 +49,9 @@ struct Ctx<'a> {
     cookies: Cookies,
     ytdlp: &'a OsStr,
     overrides: Overrides,
+    /// The LLM guesser and whether it outranks title patterns.
+    #[cfg(feature = "llm")]
+    llm: Option<(Box<resolve::LlmFn<'static>>, bool)>,
 }
 
 /// Run the CLI, writing reports to `out` and diagnostics to `err`.
@@ -105,6 +110,14 @@ where
         }
         found
     };
+    #[cfg(feature = "llm")]
+    let llm = llm::LlmConfig::from_cli(&cli).and_then(|c| match llm::make_guesser(&c) {
+        Ok(f) => Some((Box::new(f) as Box<resolve::LlmFn<'static>>, c.always)),
+        Err(error) => {
+            let _ = writeln!(err, "{PROG}: llm disabled: {error}");
+            None
+        }
+    });
     let ctx = Ctx {
         cli: &cli,
         cookies,
@@ -114,6 +127,8 @@ where
             title: cli.title.clone(),
             album: cli.album.clone(),
         },
+        #[cfg(feature = "llm")]
+        llm,
     };
 
     let (mut total, mut failed, mut planned) = (0, 0, 0);
@@ -215,8 +230,14 @@ fn process_entry(
 ) -> Result<Outcome, Error> {
     let cli = ctx.cli;
     let video = info::parse_video(&ytdlp_run(ctx, err, &ytdlp::info_args(url, &ctx.cookies))?)?;
-    // ponytail: no LLM guesser yet; the `llm` feature passes one here.
-    let tags = resolve::resolve(&video, &ctx.overrides, None, false);
+    #[cfg(feature = "llm")]
+    let (guesser, always) = ctx
+        .llm
+        .as_ref()
+        .map_or((None, false), |(f, always)| (Some(&**f), *always));
+    #[cfg(not(feature = "llm"))]
+    let (guesser, always) = (None, false);
+    let tags = resolve::resolve(&video, &ctx.overrides, guesser, always);
     // Entries sharing a destination within one run get " (2)", " (3)", ...
     let mut n = 1;
     let dest = loop {

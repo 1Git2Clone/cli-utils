@@ -44,8 +44,22 @@ First hit wins per field, and `--dry-run` shows which one won:
 
 ## LLM
 
-Only compiled with the `llm` feature. The API key is read from the
-`YT_AUDIO_LLM_KEY` environment variable, never from a flag.
+Only compiled with the `llm` feature (`cargo build --features llm`; the Nix
+`yt-audio` package has it, `yt-audio-no-llm` does not). It is used only when a
+model is configured, and only for entries the YouTube fields and title patterns
+left unresolved, unless `--llm-always` is given.
+
+| Flag            | Env var                | Meaning                          |
+| --------------- | ---------------------- | -------------------------------- |
+| `--llm-backend` | `YT_AUDIO_LLM_BACKEND` | `ollama` (default) or `openai`   |
+| `--llm-url`     | `YT_AUDIO_LLM_URL`     | Endpoint base URL                |
+| `--llm-model`   | `YT_AUDIO_LLM_MODEL`   | Model name; enables the LLM      |
+| (none)          | `YT_AUDIO_LLM_KEY`     | API key; env only, never a flag  |
+
+`openai` means any OpenAI-compatible endpoint. The model sees the title,
+channel and the first 500 characters of the description, and any artist, title
+or album it returns that does not appear in that text is discarded. Errors and
+timeouts (30 s) warn and fall back; they never abort a download.
 
 ## Development
 

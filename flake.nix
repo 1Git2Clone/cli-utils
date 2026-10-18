@@ -131,7 +131,10 @@
         // {
           # Both variants install bin/yt-audio, so only the LLM-enabled one is
           # in toolsFor (and hence the `default` bundle); this one stands alone.
-          yt-audio-no-llm = (toolsFor pkgs).yt-audio.overrideAttrs { buildFeatures = [ ]; };
+          yt-audio-no-llm = (toolsFor pkgs).yt-audio.overrideAttrs {
+            buildFeatures = [ ];
+            checkFeatures = [ ];
+          };
 
           # One installable bundle, so a consumer needs a single home.packages
           # entry rather than one per tool.

@@ -74,6 +74,37 @@ pub struct Cli {
     /// Print extra detail.
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// LLM backend: `openai` means any OpenAI-compatible endpoint.
+    #[cfg(feature = "llm")]
+    #[arg(long, value_enum, env = "YT_AUDIO_LLM_BACKEND", default_value_t)]
+    pub llm_backend: LlmBackend,
+
+    /// LLM endpoint base URL.
+    #[cfg(feature = "llm")]
+    #[arg(long, env = "YT_AUDIO_LLM_URL")]
+    pub llm_url: Option<String>,
+
+    /// LLM model name; the LLM is used only when this is set.
+    #[cfg(feature = "llm")]
+    #[arg(long, env = "YT_AUDIO_LLM_MODEL")]
+    pub llm_model: Option<String>,
+
+    /// Ask the LLM for every entry, outranking title patterns.
+    #[cfg(feature = "llm")]
+    #[arg(long)]
+    pub llm_always: bool,
+}
+
+/// Which kind of LLM endpoint to talk to.
+#[cfg(feature = "llm")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum LlmBackend {
+    /// A local or remote Ollama server.
+    #[default]
+    Ollama,
+    /// Any OpenAI-compatible endpoint.
+    Openai,
 }
 
 impl Cli {

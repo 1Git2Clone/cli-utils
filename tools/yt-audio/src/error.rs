@@ -33,4 +33,9 @@ pub enum Error {
     /// The audio file's tags could not be read or written.
     #[error("cannot write tags: {0}")]
     Tag(#[from] lofty::error::LoftyError),
+
+    /// The LLM client could not be set up.
+    #[cfg(feature = "llm")]
+    #[error("cannot set up the LLM client: {0}")]
+    Llm(String),
 }
