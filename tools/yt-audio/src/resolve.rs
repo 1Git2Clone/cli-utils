@@ -99,14 +99,14 @@ fn date_of(v: &Video) -> Option<String> {
 }
 
 /// An LLM callback: guess tags for a video, or `None` on failure.
-pub type LlmFn = dyn Fn(&Video) -> Option<Guess>;
+pub type LlmFn<'a> = dyn Fn(&Video) -> Option<Guess> + 'a;
 
 /// Resolve tags for `v`.
 ///
 /// Each field takes the first of: override, YouTube, LLM (only if
 /// `llm_always`), title pattern, LLM (only for a field still unresolved; the
 /// callback runs at most once), fallback.
-pub fn resolve(v: &Video, o: &Overrides, llm: Option<&LlmFn>, llm_always: bool) -> Tags {
+pub fn resolve(v: &Video, o: &Overrides, llm: Option<&LlmFn<'_>>, llm_always: bool) -> Tags {
     let cell = OnceCell::new();
     let guess = || cell.get_or_init(|| llm.and_then(|f| f(v))).as_ref();
     let pattern = parse_title(&v.title);
