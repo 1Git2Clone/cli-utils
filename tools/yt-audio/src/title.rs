@@ -66,10 +66,13 @@ pub fn strip_noise(title: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A title pattern: splits a cleaned title into (artist, title).
+type Pattern = fn(&str) -> Option<(String, String)>;
+
 /// Strip noise, then try each title pattern in order.
 pub fn parse_title(title: &str) -> Option<TitleGuess> {
     let title = strip_noise(title);
-    let patterns: [(&'static str, fn(&str) -> Option<(String, String)>); 3] = [
+    let patterns: [(&'static str, Pattern); 3] = [
         ("artist-dash", artist_dash),
         ("bracket-quote", bracket_quote),
         ("title-slash-artist", title_slash_artist),
