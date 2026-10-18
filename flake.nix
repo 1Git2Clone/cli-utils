@@ -37,6 +37,48 @@
           ];
         };
 
+      # One build per feature set: buildRustPackage copies buildFeatures into
+      # cargoBuildFeatures/cargoCheckFeatures at evaluation, so overrideAttrs on
+      # buildFeatures cannot change them.
+      ytAudio =
+        pkgs: buildFeatures:
+        pkgs.rustPlatform.buildRustPackage {
+          pname = "yt-audio";
+          version = "0.1.0";
+          src = rustSrc pkgs.lib;
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [
+            "-p"
+            "yt-audio"
+          ];
+          cargoTestFlags = [
+            "-p"
+            "yt-audio"
+          ];
+          inherit buildFeatures;
+
+          # Same reason as ls-posts above.
+          preConfigure = ''
+            export CARGO_HOME="$NIX_BUILD_TOP/cargo-home"
+          '';
+
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          postInstall = ''
+            wrapProgram $out/bin/yt-audio \
+              --prefix PATH : ${
+                pkgs.lib.makeBinPath [
+                  pkgs.yt-dlp
+                  pkgs.ffmpeg
+                ]
+              }
+          '';
+          meta = {
+            description = "Download YouTube audio with tidy tags and filenames";
+            license = pkgs.lib.licenses.mit;
+            mainProgram = "yt-audio";
+          };
+        };
+
       # One attribute per tool. The language is an implementation detail of this
       # function; only the attribute name is the public interface.
       toolsFor =
@@ -87,42 +129,7 @@
             };
           };
 
-          yt-audio = pkgs.rustPlatform.buildRustPackage {
-            pname = "yt-audio";
-            version = "0.1.0";
-            src = rustSrc pkgs.lib;
-            cargoLock.lockFile = ./Cargo.lock;
-            cargoBuildFlags = [
-              "-p"
-              "yt-audio"
-            ];
-            cargoTestFlags = [
-              "-p"
-              "yt-audio"
-            ];
-            buildFeatures = [ "llm" ];
-
-            # Same reason as ls-posts above.
-            preConfigure = ''
-              export CARGO_HOME="$NIX_BUILD_TOP/cargo-home"
-            '';
-
-            nativeBuildInputs = [ pkgs.makeWrapper ];
-            postInstall = ''
-              wrapProgram $out/bin/yt-audio \
-                --prefix PATH : ${
-                  pkgs.lib.makeBinPath [
-                    pkgs.yt-dlp
-                    pkgs.ffmpeg
-                  ]
-                }
-            '';
-            meta = {
-              description = "Download YouTube audio with tidy tags and filenames";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = "yt-audio";
-            };
-          };
+          yt-audio = ytAudio pkgs [ "llm" ];
         };
 
       packagesFor =
@@ -131,10 +138,7 @@
         // {
           # Both variants install bin/yt-audio, so only the LLM-enabled one is
           # in toolsFor (and hence the `default` bundle); this one stands alone.
-          yt-audio-no-llm = (toolsFor pkgs).yt-audio.overrideAttrs {
-            buildFeatures = [ ];
-            checkFeatures = [ ];
-          };
+          yt-audio-no-llm = ytAudio pkgs [ ];
 
           # One installable bundle, so a consumer needs a single home.packages
           # entry rather than one per tool.
