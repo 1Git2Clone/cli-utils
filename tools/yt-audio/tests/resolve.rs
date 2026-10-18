@@ -129,3 +129,10 @@ fn date_format() {
     assert_eq!(t.date.as_deref(), Some("2016-08-12"));
     assert_eq!(Source::Pattern("p").to_string(), "pattern:p");
 }
+
+#[test]
+fn non_ascii_eight_byte_date_does_not_panic() {
+    let v = video(r#"{"id":"x","title":"t","webpage_url":"https://y/x","upload_date":"aéééb"}"#);
+    let t = resolve(&v, &Overrides::default(), None, false);
+    assert_eq!(t.date, None);
+}

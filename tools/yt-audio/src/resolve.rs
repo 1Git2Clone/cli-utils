@@ -90,7 +90,10 @@ fn names(list: &[String]) -> Option<Vec<String>> {
 
 /// Format `YYYYMMDD` as `YYYY-MM-DD`.
 fn date_of(v: &Video) -> Option<String> {
-    let full = |d: &str| (d.len() == 8).then(|| format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]));
+    let full = |d: &str| {
+        (d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]))
+    };
     v.release_date
         .as_deref()
         .and_then(full)
