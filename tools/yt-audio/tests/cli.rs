@@ -39,7 +39,12 @@ fn cookie_flags_conflict() {
     assert_eq!(code, 2);
 }
 
+/// Writing an executable while another thread forks makes exec fail with
+/// ETXTBSY: script writers take the write lock, spawners the read lock.
+static SPAWN_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 mod fake {
+    use super::SPAWN_LOCK;
     use std::ffi::OsString;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -60,6 +65,7 @@ mod fake {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("yt-dlp");
+        let _g = SPAWN_LOCK.write().unwrap();
         std::fs::write(
             &script,
             format!(
@@ -92,6 +98,7 @@ exit 0
     impl Fake {
         /// Make downloads produce a 1s Opus file; false if ffmpeg is missing.
         pub fn with_input(&self) -> bool {
+            let _g = SPAWN_LOCK.read().unwrap();
             std::process::Command::new("ffmpeg")
                 .args([
                     "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc", "-t", "1",
@@ -104,6 +111,7 @@ exit 0
         }
 
         pub fn run(&self, args: &[&str]) -> (i32, String, String) {
+            let _g = SPAWN_LOCK.read().unwrap();
             let (mut out, mut err) = (Vec::new(), Vec::new());
             let args: Vec<OsString> = ["--no-cookies"]
                 .iter()

@@ -144,6 +144,7 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         let marker = work.path().join("marker");
         let script = work.path().join("fake-yt-dlp");
+        let write = ytdlp::SPAWN_LOCK.write().unwrap();
         std::fs::write(
             &script,
             format!(
@@ -163,6 +164,8 @@ exit 0
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        drop(write);
+        let _g = ytdlp::SPAWN_LOCK.read().unwrap();
         let home = work.path().join("home");
         std::fs::create_dir(&home).unwrap();
         assert_eq!(
@@ -181,6 +184,7 @@ exit 0
 
     #[test]
     fn detect_stops_when_program_missing() {
+        let _g = ytdlp::SPAWN_LOCK.read().unwrap();
         let home = tempfile::tempdir().unwrap();
         assert_eq!(
             detect(home.path(), OsStr::new("/nonexistent/yt-dlp")),

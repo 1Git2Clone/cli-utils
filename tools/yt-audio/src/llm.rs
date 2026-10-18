@@ -47,6 +47,14 @@ fn excerpt(v: &Video) -> String {
         .collect()
 }
 
+/// The channel name sent to the model: channel, else uploader.
+fn channel_of(v: &Video) -> &str {
+    v.channel
+        .as_deref()
+        .or(v.uploader.as_deref())
+        .unwrap_or_default()
+}
+
 /// The request text for `v`.
 pub fn prompt(v: &Video) -> String {
     format!(
@@ -54,10 +62,7 @@ pub fn prompt(v: &Video) -> String {
          {{\"artists\":[\"...\"],\"title\":\"...\",\"album\":\"...\" or null}}. \
          Use only names that appear below.\n\nTitle: {}\nChannel: {}\nDescription: {}",
         v.title,
-        v.channel
-            .as_deref()
-            .or(v.uploader.as_deref())
-            .unwrap_or_default(),
+        channel_of(v),
         excerpt(v),
     )
 }
@@ -94,13 +99,7 @@ pub fn parse_response(text: &str) -> Option<Guess> {
 
 /// Keep only values that appear (case-insensitively) in what was sent.
 pub fn guard(g: Guess, v: &Video) -> Guess {
-    let haystack = format!(
-        "{}\n{}\n{}",
-        v.title,
-        v.channel.as_deref().unwrap_or_default(),
-        excerpt(v)
-    )
-    .to_lowercase();
+    let haystack = format!("{}\n{}\n{}", v.title, channel_of(v), excerpt(v)).to_lowercase();
     let seen = |s: &str| !s.trim().is_empty() && haystack.contains(&s.to_lowercase());
     Guess {
         artists: g.artists.into_iter().filter(|a| seen(a)).collect(),
@@ -132,7 +131,8 @@ pub fn make_guesser(cfg: &LlmConfig) -> Result<impl Fn(&Video) -> Option<Guess> 
     let provider = b.build().map_err(|e| Error::Llm(e.to_string()))?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()?;
+        .build()
+        .map_err(|e| Error::Llm(format!("cannot start async runtime: {e}")))?;
     Ok(move |v: &Video| {
         let msgs = [ChatMessage::user().content(prompt(v)).build()];
         let reply = rt
@@ -196,6 +196,21 @@ mod tests {
         assert_eq!(g.artists, ["A"]);
         assert_eq!(g.title.as_deref(), Some("T"));
         assert_eq!(g.album, None);
+    }
+
+    #[test]
+    fn guard_accepts_uploader_sent_in_prompt() {
+        let json = serde_json::json!({
+            "id": "x", "title": "t", "webpage_url": "https://y/x", "uploader": "Upl",
+        });
+        let v = parse_video(&json.to_string()).unwrap();
+        assert!(prompt(&v).contains("Channel: Upl"));
+        let g = Guess {
+            artists: vec!["Upl".into()],
+            title: None,
+            album: None,
+        };
+        assert_eq!(guard(g, &v).artists, ["Upl"]);
     }
 
     #[test]

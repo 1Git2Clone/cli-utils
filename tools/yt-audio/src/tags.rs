@@ -65,6 +65,7 @@ mod tests {
     use std::process::{Command, Stdio};
 
     fn ffmpeg(args: &[&str], out: &Path) -> bool {
+        let _g = crate::ytdlp::SPAWN_LOCK.read().unwrap();
         Command::new("ffmpeg")
             .args(["-v", "error", "-y"])
             .args(args)

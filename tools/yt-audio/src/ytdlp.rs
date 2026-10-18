@@ -24,7 +24,7 @@ fn base(c: &Cookies) -> Vec<String> {
 pub fn listing_args(url: &str, c: &Cookies) -> Vec<String> {
     let mut args = base(c);
     args.extend(["-J", "--flat-playlist"].map(String::from));
-    args.push(url.to_string());
+    args.extend(["--".to_string(), url.to_string()]);
     args
 }
 
@@ -32,13 +32,13 @@ pub fn listing_args(url: &str, c: &Cookies) -> Vec<String> {
 pub fn info_args(url: &str, c: &Cookies) -> Vec<String> {
     let mut args = base(c);
     args.extend(["-J", "--no-playlist"].map(String::from));
-    args.push(url.to_string());
+    args.extend(["--".to_string(), url.to_string()]);
     args
 }
 
 /// Arguments to download and extract audio to `<dest_no_ext>.<ext>`.
 ///
-/// yt-dlp prints the final path on stdout; `extra` goes just before the URL.
+/// yt-dlp prints the final path on stdout; `extra` goes just before the `--` that ends options.
 pub fn download_args(
     url: &str,
     dest_no_ext: &Path,
@@ -68,10 +68,13 @@ pub fn download_args(
         .to_string(),
     );
     args.push("-o".to_string());
-    args.push(format!("{}.%(ext)s", dest_no_ext.display()));
+    args.push(format!(
+        "{}.%(ext)s",
+        dest_no_ext.display().to_string().replace('%', "%%")
+    ));
     args.extend(["--print", "after_move:filepath"].map(String::from));
     args.extend(extra.iter().cloned());
-    args.push(url.to_string());
+    args.extend(["--".to_string(), url.to_string()]);
     args
 }
 
@@ -144,6 +147,12 @@ pub fn run_with_timeout(
     }
 }
 
+/// Test-only: writing an executable while another thread forks leaves the
+/// child holding the write fd, so exec fails with ETXTBSY. Script writers take
+/// the write lock; anything that spawns takes the read lock.
+#[cfg(test)]
+pub(crate) static SPAWN_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,7 +176,16 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["--audio-format", "opus"]));
         assert!(a.contains(&"--no-overwrites".to_string()));
         assert!(a.windows(2).any(|w| w == ["-o", "/d/x.%(ext)s"]));
-        assert_eq!(a[a.len() - 2..], s(&["--foo", "U"]));
+        assert_eq!(a[a.len() - 3..], s(&["--foo", "--", "U"]));
+        let a = download_args(
+            "U",
+            Path::new("/d/100%(x)s"),
+            AudioFormat::Opus,
+            false,
+            &Cookies::None,
+            &[],
+        );
+        assert!(a.windows(2).any(|w| w == ["-o", "/d/100%%(x)s.%(ext)s"]));
     }
 
     #[test]
@@ -188,13 +206,14 @@ mod tests {
         let l = listing_args("U", &c);
         assert_eq!(l[0], "--ignore-config");
         assert!(l.contains(&"--flat-playlist".to_string()));
-        assert_eq!(l.last().unwrap(), "U");
+        assert_eq!(l[l.len() - 2..], s(&["--", "U"]));
         let i = info_args("U", &Cookies::None);
-        assert_eq!(i, s(&["--ignore-config", "-J", "--no-playlist", "U"]));
+        assert_eq!(i, s(&["--ignore-config", "-J", "--no-playlist", "--", "U"]));
     }
 
     #[test]
     fn run_reports_failure_tail() {
+        let _g = SPAWN_LOCK.read().unwrap();
         let args = s(&[
             "-c",
             "echo out; for i in $(seq 30); do echo e$i >&2; done; exit 3",
@@ -214,6 +233,7 @@ mod tests {
 
     #[test]
     fn timeout_kills_slow_process() {
+        let _g = SPAWN_LOCK.read().unwrap();
         let t = Instant::now();
         let r = run_with_timeout(
             OsStr::new("sh"),
