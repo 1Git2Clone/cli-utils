@@ -89,8 +89,9 @@ git push origin yt-audio-v0.1.2
 
 `.forgejo/workflows/yt-audio-release.yml` then runs clippy and the Nix builds
 (which run the tests) on the tagged commit. Only if they pass does it publish
-to crates.io and create the Forgejo release. It needs the
-`CARGO_REGISTRY_TOKEN` repository secret.
+to crates.io and create the Forgejo release. It needs two repository secrets:
+`CARGO_REGISTRY_TOKEN` (crates.io, publish-update) and `RELEASE_TOKEN`
+(a Forgejo token with repository write on cli-utils).
 
 ## Development
 

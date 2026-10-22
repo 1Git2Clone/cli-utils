@@ -6,7 +6,8 @@
 # two workflows publishing one version would race each other to crates.io.
 #
 # Needs the CARGO_REGISTRY_TOKEN repo secret (a crates.io token scoped to
-# publish-update on yt-audio). The Forgejo release uses the job's own token.
+# publish-update on yt-audio) and RELEASE_TOKEN (a Forgejo token with
+# repository write on cli-utils; the job's own token is read-only here).
 name: yt-audio release
 
 on:
@@ -64,7 +65,7 @@ jobs:
 
       - name: Forgejo release
         env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
           tag="$GITHUB_REF_NAME"
@@ -73,8 +74,8 @@ jobs:
             echo "release $tag already exists"
             exit 0
           fi
-          curl -sf -H "$auth" "$api/tags/$tag" |
+          curl -s --fail-with-body -H "$auth" "$api/tags/$tag" |
             nix shell nixpkgs#jq -c jq --arg name "${tag/-v/ v}" \
               '{tag_name: .name, name: $name, body: .message}' |
-            curl -sf -X POST -H "$auth" -H "Content-Type: application/json" \
+            curl -s --fail-with-body -X POST -H "$auth" -H "Content-Type: application/json" \
               --data @- "$api/releases"
