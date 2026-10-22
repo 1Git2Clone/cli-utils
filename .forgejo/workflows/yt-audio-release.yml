@@ -1,0 +1,80 @@
+# Ships yt-audio when a `yt-audio-v<version>` tag is pushed: crates.io first,
+# then a Forgejo release whose body is the annotated tag's message. `release`
+# needs `check`, so a tag whose CI fails never ships.
+#
+# Forgejo only, with no GitHub twin: the mirror receives the same tags, and
+# two workflows publishing one version would race each other to crates.io.
+#
+# Needs the CARGO_REGISTRY_TOKEN repo secret (a crates.io token scoped to
+# publish-update on yt-audio). The Forgejo release uses the job's own token.
+name: yt-audio release
+
+on:
+  push:
+    tags: ["yt-audio-v*"]
+
+concurrency:
+  group: yt-audio-release-${{ github.ref }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: CI on the tag
+    runs-on: nix-node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Tag matches the crate version
+        run: |
+          want="${GITHUB_REF_NAME#yt-audio-v}"
+          have="$(sed -n 's/^version = "\(.*\)"$/\1/p' tools/yt-audio/Cargo.toml | head -n1)"
+          if [ "$want" != "$have" ]; then
+            echo "tag says $want, tools/yt-audio/Cargo.toml says $have"
+            exit 1
+          fi
+
+      - run: nix develop -c cargo clippy -p yt-audio --all-targets -- -D warnings
+      - run: nix develop -c cargo clippy -p yt-audio --all-targets --features llm -- -D warnings
+
+      # Both variants run `cargo test` in their checkPhase.
+      - run: nix build .#yt-audio .#yt-audio-no-llm --print-build-logs
+
+  release:
+    needs: check
+    runs-on: nix-node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Each step skips what is already done, so a re-run after a later
+      # failure does not trip over an earlier success.
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#yt-audio-v}"
+          if curl -sf -A "cli-utils release CI" \
+              "https://crates.io/api/v1/crates/yt-audio/$version" >/dev/null; then
+            echo "yt-audio $version is already on crates.io"
+          else
+            nix develop -c cargo publish -p yt-audio
+          fi
+
+      - name: Forgejo release
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          tag="$GITHUB_REF_NAME"
+          auth="Authorization: token $TOKEN"
+          if curl -sf -H "$auth" "$api/releases/tags/$tag" >/dev/null; then
+            echo "release $tag already exists"
+            exit 0
+          fi
+          curl -sf -H "$auth" "$api/tags/$tag" |
+            nix shell nixpkgs#jq -c jq --arg name "${tag/-v/ v}" \
+              '{tag_name: .name, name: $name, body: .message}' |
+            curl -sf -X POST -H "$auth" -H "Content-Type: application/json" \
+              --data @- "$api/releases"

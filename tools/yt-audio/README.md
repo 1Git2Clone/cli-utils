@@ -77,6 +77,21 @@ artist, title or album it returns that does not appear in that text is
 discarded. Errors and timeouts (30 s) warn and fall back; they never abort a
 download.
 
+## Releasing
+
+Bump `version` in `Cargo.toml` (and `flake.nix`'s `ytAudio`), commit, then
+push an annotated tag; its message becomes the release notes:
+
+```console
+git tag -a yt-audio-v0.1.2 -m "yt-audio 0.1.2" -m "What changed."
+git push origin yt-audio-v0.1.2
+```
+
+`.forgejo/workflows/yt-audio-release.yml` then runs clippy and the Nix builds
+(which run the tests) on the tagged commit. Only if they pass does it publish
+to crates.io and create the Forgejo release. It needs the
+`CARGO_REGISTRY_TOKEN` repository secret.
+
 ## Development
 
 ```console
