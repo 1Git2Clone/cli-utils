@@ -44,7 +44,7 @@
         pkgs: buildFeatures:
         pkgs.rustPlatform.buildRustPackage {
           pname = "yt-audio";
-          version = "0.1.2";
+          version = "0.1.3";
           src = rustSrc pkgs.lib;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [
