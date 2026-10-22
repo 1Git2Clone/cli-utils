@@ -1,10 +1,11 @@
 [package]
 name = "yt-audio"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Download YouTube audio with tidy tags and filenames"
 license = "MIT"
+repository = "https://git.hu-tao.dev/hutao/cli-utils"
 
 [features]
 llm = ["dep:llm"]
