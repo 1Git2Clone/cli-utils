@@ -26,7 +26,7 @@ jobs:
       GIT_TERMINAL_PROMPT: "0"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The same hooks the local commit hook runs, so a green CI means a clean
       # `pre-commit run --all-files` on the developer's machine and vice versa.
