@@ -278,13 +278,14 @@ async fn process<W: Write>(ctx: &Ctx<'_, W>, out: &mut impl Write) -> i32 {
 async fn list<W: Write>(url: &Url, ctx: &Ctx<'_, W>) -> Result<(Vec<Entry>, usize), Error> {
     let args = ytdlp::listing_args(url, &ctx.cookies.for_url(url));
     let output_dir = ctx.cli.output_dir.clone();
+    let root = ctx.cli.root.clone().unwrap_or_else(|| ".".into());
     Ok(match info::parse_listing(&ctx.ytdlp(&args).await?)? {
         Listing::Playlist {
             title,
             entries,
             missing,
         } => {
-            let base = output_dir.unwrap_or_else(|| Path::new(".").join(sanitize(&title)));
+            let base = output_dir.unwrap_or_else(|| root.join(sanitize(&title)));
             let entries = entries
                 .into_iter()
                 .map(|url| Entry {
@@ -298,7 +299,7 @@ async fn list<W: Write>(url: &Url, ctx: &Ctx<'_, W>) -> Result<(Vec<Entry>, usiz
         Listing::Single(canonical) => {
             let entry = Entry {
                 url: canonical.unwrap_or_else(|| url.clone()),
-                base: output_dir.unwrap_or_else(|| ".".into()),
+                base: output_dir.unwrap_or(root),
                 flat: false,
             };
             (vec![entry], 0)

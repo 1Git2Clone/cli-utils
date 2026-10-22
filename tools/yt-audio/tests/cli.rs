@@ -147,6 +147,14 @@ async fn dry_run_playlist_uses_playlist_folder() {
 }
 
 #[tokio::test]
+async fn root_keeps_playlist_folder() {
+    let f = fake::fake("root", "playlist_flat.json", "NONE").await;
+    let (code, out, _) = f.run(&["-n", "--root", "/tmp/r", "https://y/p"]).await;
+    assert_eq!(code, 0);
+    assert!(out.starts_with("/tmp/r/My Mix/"), "{out}");
+}
+
+#[tokio::test]
 async fn output_dir_overrides_playlist_folder() {
     let f = fake::fake("outdir", "playlist_flat.json", "NONE").await;
     let (code, out, _) = f.run(&["-n", "-o", "/tmp/x", "https://y/p"]).await;

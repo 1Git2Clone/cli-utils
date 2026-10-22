@@ -50,6 +50,11 @@ pub struct Cli {
     #[arg(short, long, value_name = "DIR")]
     pub output_dir: Option<PathBuf>,
 
+    /// Where album and playlist folders go when `--output-dir` is not given;
+    /// defaults to the current directory.
+    #[arg(long, value_name = "DIR", env = "YT_AUDIO_ROOT")]
+    pub root: Option<PathBuf>,
+
     /// Override the artist tag (repeatable).
     #[arg(long)]
     pub artist: Vec<String>,

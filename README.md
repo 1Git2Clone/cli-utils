@@ -9,6 +9,7 @@ built by Cargo, Go, or a Python wrapper is an implementation detail.
 | Tool | Language | What it does |
 | --- | --- | --- |
 | [`ls-posts`](tools/ls-posts/) | Rust | Reconstruct gallery-dl post URLs from a folder tree |
+| [`yt-audio`](tools/yt-audio/) | Rust | Download audio from yt-dlp sites with multi-artist tags and square cover art |
 | [`scripts`](tools/scripts/) | Bash, Python | Desktop and shell helpers, one package per script, named after its file |
 
 ## Install

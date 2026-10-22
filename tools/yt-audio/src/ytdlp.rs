@@ -57,7 +57,18 @@ pub fn download_args(
     if let Some(audio) = audio {
         args.extend(["--audio-format", audio, "--audio-quality", "0"].map(String::from));
     }
-    args.push("--embed-thumbnail".to_string());
+    // Site thumbnails are often 16:9 frames of letterboxed square album art;
+    // a centre square keeps the art and drops the bars.
+    args.extend(
+        [
+            "--embed-thumbnail",
+            "--convert-thumbnails",
+            "png",
+            "--ppa",
+            "ThumbnailsConvertor+ffmpeg_o:-vf crop=\"'min(iw,ih)':'min(iw,ih)'\"",
+        ]
+        .map(String::from),
+    );
     args.push(
         if force {
             "--force-overwrites"
@@ -145,6 +156,8 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["--audio-format", "opus"]));
         assert!(a.contains(&"--no-overwrites".to_string()));
         assert!(a.windows(2).any(|w| w == ["-o", "/d/x.%(ext)s"]));
+        assert!(a.windows(2).any(|w| w == ["--convert-thumbnails", "png"]));
+        assert!(a.iter().any(|x| x.contains("crop=")));
         assert_eq!(
             a[a.len() - 3..],
             s(&["--foo", "--", "https://example.com/v/1"])

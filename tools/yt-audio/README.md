@@ -16,8 +16,10 @@ yt-audio <URL> -- --limit-rate 1M    # extra yt-dlp download arguments
 ```
 
 Each URL can be a video or a playlist. A video lands in
-`<output-dir or .>/<album>/<title>.<ext>`; a playlist in
-`<output-dir or ./<playlist title>>/<title>.<ext>`. Existing files are skipped
+`<output-dir or root>/<album>/<title>.<ext>`; a playlist in
+`<output-dir or root/<playlist title>>/<title>.<ext>`. The root is `--root`,
+else `$YT_AUDIO_ROOT`, else the current directory; point it at a music library
+to file albums and playlists there from anywhere. Existing files are skipped
 unless `--force`. Entries are fetched and downloaded concurrently (`--jobs`,
 default 4) but reported in playlist order. A failing entry is reported and the
 run continues; the exit code is 1 if any entry failed.
@@ -26,6 +28,12 @@ run continues; the exit code is 1 if any entry failed.
 
 `--fmt opus` (default) and `best` keep the site's stream without re-encoding
 when it already is that format; `m4a` and `mp3` re-encode.
+
+## Cover art
+
+The site's thumbnail is embedded as a PNG, cropped to its centre square:
+YouTube serves album art as a 16:9 frame with bars either side. A thumbnail
+that really is 16:9 loses its sides.
 
 ## Cookies
 
