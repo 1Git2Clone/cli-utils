@@ -141,11 +141,6 @@ where
         }
     };
 
-    if is_root() {
-        let _ = writeln!(err, "{PROG}: {}", Error::Root);
-        return 1;
-    }
-
     let cookies = if cli.no_cookies {
         CookieChoice::Fixed(Cookies::None)
     } else if let Some(spec) = &cli.cookies_from_browser {
@@ -226,7 +221,8 @@ async fn process<W: Write>(ctx: &Ctx<'_, W>, out: &mut impl Write) -> i32 {
     while let Some(r) = fetches.next().await {
         match r {
             Ok(r) => resolved.push(r),
-            Err((url, error)) => {
+            Err(entry_error) => {
+                let (url, error) = *entry_error;
                 ctx.say(format_args!("{url}: {error}"));
                 failed += 1;
             }
@@ -308,11 +304,14 @@ async fn list<W: Write>(url: &Url, ctx: &Ctx<'_, W>) -> Result<(Vec<Entry>, usiz
 }
 
 /// Fetch an entry's metadata and resolve its tags.
-async fn resolve_entry<W: Write>(entry: Entry, ctx: &Ctx<'_, W>) -> Result<Resolved, (Url, Error)> {
+async fn resolve_entry<W: Write>(
+    entry: Entry,
+    ctx: &Ctx<'_, W>,
+) -> Result<Resolved, Box<(Url, Error)>> {
     let args = ytdlp::info_args(&entry.url, &ctx.cookies.for_url(&entry.url));
     let video = match ctx.ytdlp(&args).await.and_then(|j| info::parse_video(&j)) {
         Ok(video) => video,
-        Err(error) => return Err((entry.url, error)),
+        Err(error) => return Err(Box::new((entry.url, error))),
     };
     let (guess, always) = guess(&video, ctx).await;
     let tags = resolve::resolve(&video, &ctx.overrides, guess.as_ref(), always);
